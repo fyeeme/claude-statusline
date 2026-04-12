@@ -54,7 +54,7 @@ test("CLI renders expected output for a basic transcript", async (t) => {
       cwd: path.resolve(process.cwd()),
       input: stdin,
       encoding: "utf8",
-      env: { ...process.env, HOME: homeDir, LANG: "C" },
+      env: { ...process.env, HOME: homeDir, LANG: "C", ANTHROPIC_BASE_URL: "", ANTHROPIC_AUTH_TOKEN: "" },
     });
 
     if (skipIfSpawnBlocked(result, t)) return;

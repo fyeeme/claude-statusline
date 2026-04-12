@@ -63,11 +63,25 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed';
 }
 
+/** Semantic window type for usage display */
+export type UsageWindowType = 'fixed' | 'rolling' | 'estimated';
+
+/** Platform that provides usage data */
+export type UsagePlatform = 'anthropic' | 'glm';
+
 export interface UsageData {
   fiveHour: number | null;  // 0-100 percentage, null if unavailable
   sevenDay: number | null;  // 0-100 percentage, null if unavailable
   fiveHourResetAt: Date | null;
   sevenDayResetAt: Date | null;
+  /** Semantic window type for the 5h slot. Default: 'fixed' (Anthropic resets at a known time) */
+  fiveHourWindowType?: UsageWindowType;
+  /** Semantic window type for the 7d slot. Default: 'fixed' (Anthropic resets at a known time) */
+  sevenDayWindowType?: UsageWindowType;
+  /** Platform providing this usage data. Default: 'anthropic' */
+  platform?: UsagePlatform;
+  /** 7-day total token count (GLM only, for display context) */
+  sevenDayTokens?: number;
 }
 
 export interface MemoryInfo {

@@ -282,6 +282,7 @@ test("main uses stdin-native rate_limits when available", async () => {
       mcpCount: 0,
       hooksCount: 0,
     }),
+    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     render: (ctx) => {
       renderedContext = ctx;
@@ -314,6 +315,7 @@ test("main leaves usageData null when stdin rate_limits are absent", async () =>
       mcpCount: 0,
       hooksCount: 0,
     }),
+    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     render: (ctx) => {
       renderedContext = ctx;
@@ -342,6 +344,7 @@ test("main includes Claude Code version in render context only when enabled", as
       mcpCount: 0,
       hooksCount: 0,
     }),
+    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
@@ -405,6 +408,7 @@ test("main skips Claude Code version lookup when disabled", async () => {
       mcpCount: 0,
       hooksCount: 0,
     }),
+    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
@@ -472,6 +476,7 @@ test("main includes memoryUsage in render context only for expanded layout when 
       mcpCount: 0,
       hooksCount: 0,
     }),
+    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
@@ -535,6 +540,7 @@ test("main skips memoryUsage lookup for compact layout even when enabled", async
       mcpCount: 0,
       hooksCount: 0,
     }),
+    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({

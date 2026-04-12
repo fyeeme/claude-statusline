@@ -8,13 +8,16 @@ import { parseExtraCmdArg, runExtraCmd } from "./extra-cmd.js";
 import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
 import { setLanguage, t } from "./i18n/index.js";
-import type { RenderContext } from "./types.js";
+import { getGlmUsage } from "./glm-usage.js";
+import type { RenderContext, UsageData } from "./types.js";
+import type { GlmUsageDeps } from "./glm-usage.js";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
 export type MainDeps = {
   readStdin: typeof readStdin;
   getUsageFromStdin: typeof getUsageFromStdin;
+  getGlmUsage: (overrides?: Partial<GlmUsageDeps>) => Promise<UsageData | null>;
   parseTranscript: typeof parseTranscript;
   countConfigs: typeof countConfigs;
   getGitStatus: typeof getGitStatus;
@@ -32,6 +35,7 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
   const deps: MainDeps = {
     readStdin,
     getUsageFromStdin,
+    getGlmUsage,
     parseTranscript,
     countConfigs,
     getGitStatus,
@@ -73,10 +77,15 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
       ? await deps.getGitStatus(stdin.cwd)
       : null;
 
-    // Usage comes only from Claude Code's official stdin rate_limits fields.
+    // Usage comes from Claude Code's stdin rate_limits (Anthropic),
+    // or falls back to GLM API when rate_limits is absent.
     let usageData: RenderContext["usageData"] = null;
     if (config.display.showUsage !== false) {
       usageData = deps.getUsageFromStdin(stdin);
+      // GLM fallback: when stdin has no rate_limits, try GLM API
+      if (!usageData) {
+        usageData = await deps.getGlmUsage();
+      }
     }
 
     const extraCmd = deps.parseExtraCmdArg();
