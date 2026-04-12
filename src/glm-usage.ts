@@ -29,8 +29,18 @@ interface ModelUsageEntry {
   totalTokens?: number;
 }
 
+interface ModelUsageTotalUsage {
+  totalModelCallCount?: number;
+  totalTokensUsage?: number;
+  modelSummaryList?: { modelName: string; totalTokens: number; sortOrder: number }[];
+}
+
 interface ModelUsageResponse {
-  data?: ModelUsageEntry[];
+  data?: {
+    totalUsage?: ModelUsageTotalUsage;
+    modelSummaryList?: { modelName: string; totalTokens: number }[];
+    modelDataList?: { modelName: string; totalTokens: number }[];
+  } | ModelUsageEntry[];
 }
 
 // ---- Helpers ----
@@ -57,10 +67,33 @@ export function formatTokenCount(n: number): string {
   return String(n);
 }
 
-/** Sum totalTokens from model-usage response entries */
-function sumTotalTokens(entries?: ModelUsageEntry[]): number {
-  if (!Array.isArray(entries)) return 0;
-  return entries.reduce((sum, e) => sum + (e.totalTokens ?? 0), 0);
+/** Extract total tokens from model-usage response. Handles both formats:
+ *  1. Object format: data.totalUsage.totalTokensUsage (bigmodel.cn)
+ *  2. Array format: data[].totalTokens (z.ai / older API)
+ */
+function extractTotalTokens(data?: ModelUsageResponse['data']): number {
+  if (!data) return 0;
+
+  // Object format: data.totalUsage.totalTokensUsage
+  if (!Array.isArray(data) && typeof data === 'object') {
+    const obj = data as Exclude<ModelUsageResponse['data'], ModelUsageEntry[]>;
+    const totalUsage = obj?.totalUsage;
+    if (totalUsage && typeof totalUsage.totalTokensUsage === 'number') {
+      return totalUsage.totalTokensUsage;
+    }
+    // Fallback: sum modelSummaryList
+    const summary = obj?.modelSummaryList;
+    if (Array.isArray(summary)) {
+      return summary.reduce((sum, e) => sum + (e.totalTokens ?? 0), 0);
+    }
+  }
+
+  // Array format: data[].totalTokens
+  if (Array.isArray(data)) {
+    return data.reduce((sum, e) => sum + (e.totalTokens ?? 0), 0);
+  }
+
+  return 0;
 }
 
 /** Clamp a value to [min, max] */
@@ -146,7 +179,7 @@ async function fetchGlmApi(baseDomain: string, headers: Record<string, string>):
   try {
     if (usage24hRes.ok) {
       const usageJson: ModelUsageResponse = await usage24hRes.json();
-      tokens24h = sumTotalTokens(usageJson?.data);
+      tokens24h = extractTotalTokens(usageJson?.data);
     }
   } catch {
     // Defensive parsing
@@ -155,7 +188,7 @@ async function fetchGlmApi(baseDomain: string, headers: Record<string, string>):
   try {
     if (usage7dRes.ok) {
       const usageJson: ModelUsageResponse = await usage7dRes.json();
-      tokens7d = sumTotalTokens(usageJson?.data);
+      tokens7d = extractTotalTokens(usageJson?.data);
     }
   } catch {
     // Defensive parsing
