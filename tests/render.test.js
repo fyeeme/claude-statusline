@@ -1390,9 +1390,9 @@ test('renderUsageLine uses custom usage palette overrides', () => {
 
   const line = withTerminal(120, () => renderUsageLine(ctx));
   assert.ok(line, 'should render usage line');
-  assert.ok(line.includes('\x1b[36m███'), `expected custom usage bar color, got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[36m██'), `expected custom usage bar color, got: ${JSON.stringify(line)}`);
   assert.ok(line.includes('\x1b[36m25%\x1b[0m'), `expected custom usage percentage color, got: ${JSON.stringify(line)}`);
-  assert.ok(line.includes('\x1b[35m████████'), `expected custom usage warning color, got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[35m█████'), `expected custom usage warning color, got: ${JSON.stringify(line)}`);
   assert.ok(line.includes('\x1b[35m80%\x1b[0m'), `expected custom usage warning percentage color, got: ${JSON.stringify(line)}`);
 });
 
@@ -1774,7 +1774,7 @@ test('render expanded layout combines usage and context when adjacent in element
   assert.equal(lines.length, 1, 'adjacent usage and context should share one expanded line');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].includes('│'), 'combined line should preserve the shared separator');
+  assert.ok(lines[0].includes('|'), 'combined line should preserve the shared separator');
 });
 
 test('render expanded layout keeps usage and context separate when not adjacent', () => {

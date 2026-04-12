@@ -229,7 +229,7 @@ function splitLineBySeparators(line: string): { segments: string[]; separators: 
 
     const separator = line.startsWith(' | ', i)
       ? ' | '
-      : (line.startsWith(' │ ', i) ? ' │ ' : null);
+      : null;
 
     if (separator) {
       segments.push(line.slice(currentStart, i));
@@ -411,7 +411,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
       const secondLine = renderElementLine(ctx, nextElement);
 
       if (firstLine && secondLine) {
-        const combinedLine = `${firstLine} │ ${secondLine}`;
+        const combinedLine = `${firstLine} | ${secondLine}`;
         const canCombine = !terminalWidth || visualLength(combinedLine) <= terminalWidth;
 
         if (canCombine) {

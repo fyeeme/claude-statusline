@@ -110,7 +110,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     return null;
   }
 
-  return parts.join(' \u2502 ');
+  return parts.join(' | ');
 }
 
 function formatAheadCount(

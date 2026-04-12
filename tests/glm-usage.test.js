@@ -5,8 +5,8 @@ import { getGlmUsage, formatTokenCount } from '../dist/glm-usage.js';
 // ---- formatTokenCount tests ----
 
 describe('formatTokenCount', () => {
-  it('formats billions', () => {
-    assert.equal(formatTokenCount(1_200_000_000), '1.2B');
+  it('formats billions (floor)', () => {
+    assert.equal(formatTokenCount(1_200_000_000), '1B');
   });
 
   it('formats billions (whole)', () => {
@@ -17,16 +17,16 @@ describe('formatTokenCount', () => {
     assert.equal(formatTokenCount(310_000_000), '310M');
   });
 
-  it('formats millions (decimal)', () => {
-    assert.equal(formatTokenCount(1_500_000), '1.5M');
+  it('formats millions (floor)', () => {
+    assert.equal(formatTokenCount(1_500_000), '1M');
   });
 
   it('formats thousands', () => {
     assert.equal(formatTokenCount(850_000), '850K');
   });
 
-  it('formats thousands (decimal)', () => {
-    assert.equal(formatTokenCount(1_500), '1.5K');
+  it('formats thousands (floor)', () => {
+    assert.equal(formatTokenCount(1_500), '1K');
   });
 
   it('formats small numbers', () => {
