@@ -64,7 +64,7 @@ export interface TodoItem {
 }
 
 /** Semantic window type for usage display */
-export type UsageWindowType = 'fixed' | 'rolling' | 'estimated';
+export type UsageWindowType = 'fixed' | 'rolling' | 'cycle';
 
 /** Platform that provides usage data */
 export type UsagePlatform = 'anthropic' | 'glm';

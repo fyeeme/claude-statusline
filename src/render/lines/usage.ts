@@ -45,7 +45,9 @@ export function renderUsageLine(ctx: RenderContext): string | null {
   const usageBarEnabled = display?.usageBarEnabled ?? true;
   // R9b: GLM threshold override — always show 7d bar for GLM
   const sevenDayThreshold = isGlm ? 0 : (display?.sevenDayThreshold ?? 80);
-  const barWidth = Math.max(4, getAdaptiveBarWidth());
+  const baseBarWidth = getAdaptiveBarWidth();
+  // Unified 0.9 scaling for all bars to keep context/usage visually consistent
+  const barWidth = Math.max(4, Math.ceil(baseBarWidth * 0.8));
 
   if (fiveHour === null && sevenDay !== null) {
     const weeklyOnlyPart = formatUsageWindowPart({
@@ -125,14 +127,14 @@ function formatUsageWindowPart({
   const usageDisplay = formatUsagePercent(percent, colors);
   const styledLabel = label(windowLabel, colors);
 
-  // For rolling/estimated windows: no reset time, add semantic label
-  const isSemanticWindow = windowType === 'rolling' || windowType === 'estimated';
+  // For rolling/cycle windows: no reset time, add semantic label
+  const isSemanticWindow = windowType === 'rolling' || windowType === 'cycle';
 
-  // Build suffix: token count for estimated, window type label for rolling
+  // Build suffix: token count for cycle, window type label for rolling
   let suffix = '';
   if (windowType === 'rolling') {
     suffix = ` (${styledLabel})`;
-  } else if (windowType === 'estimated' && tokenCount != null && tokenCount > 0) {
+  } else if (windowType === 'cycle' && tokenCount != null && tokenCount > 0) {
     suffix = ` (${formatTokenCount(tokenCount)} / ${styledLabel})`;
   }
 
@@ -151,7 +153,7 @@ function formatUsageWindowPart({
       : `${styledLabel} ${usageDisplay}`;
   }
 
-  // Rolling/estimated: no reset time, show suffix
+  // Rolling/cycle: no reset time, show suffix
   if (usageBarEnabled) {
     const body = `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}${suffix}`;
     return forceLabel ? `${styledLabel} ${body}` : body;

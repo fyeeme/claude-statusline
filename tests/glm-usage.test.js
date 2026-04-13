@@ -2,6 +2,10 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getGlmUsage, formatTokenCount } from '../dist/glm-usage.js';
 
+// Fixed subscription time for consistent test results
+const FIXED_SUB_TIME = new Date('2026-03-30T07:43:28.000Z').getTime();
+const CYCLE_MS = 7 * 24 * 60 * 60 * 1000;
+
 // ---- formatTokenCount tests ----
 
 describe('formatTokenCount', () => {
@@ -55,7 +59,10 @@ function createMockDeps(overrides = {}) {
       fiveHourPct: 10,
       tokens24h: 55_800_000,
       tokens7d: 310_000_000,
+      timeLimitResetTime: new Date('2026-04-30T07:43:12.000Z').getTime(),
     }),
+    readCalibrationFields: () => ({ subscriptionTimeMs: FIXED_SUB_TIME }),
+    now: () => Date.now(),
     ...overrides,
   };
 }
@@ -94,7 +101,7 @@ describe('getGlmUsage', () => {
         sevenDay: 8,
         sevenDayTokens: 200_000_000,
         fiveHourWindowType: 'rolling',
-        sevenDayWindowType: 'estimated',
+        sevenDayWindowType: 'cycle',
         timestamp: Date.now(),
         ttlMs: 5 * 60 * 1000,
       }),
@@ -110,7 +117,7 @@ describe('getGlmUsage', () => {
     assert.equal(result.sevenDay, 8);
     assert.equal(result.platform, 'glm');
     assert.equal(result.fiveHourWindowType, 'rolling');
-    assert.equal(result.sevenDayWindowType, 'estimated');
+    assert.equal(result.sevenDayWindowType, 'cycle');
     assert.equal(result.sevenDayTokens, 200_000_000);
   });
 
@@ -121,9 +128,9 @@ describe('getGlmUsage', () => {
     assert.equal(result.fiveHour, 10);
     assert.equal(result.fiveHourWindowType, 'rolling');
     assert.equal(result.platform, 'glm');
-    // 7d: (310M * 10) / (55.8M * 7) = 7.94 → 8
-    assert.equal(result.sevenDay, 8);
-    assert.equal(result.sevenDayWindowType, 'estimated');
+    // Calibrated: limit7d = 55.8M * 100 / 10 = 558M; 7d% = 310M / 558M * 100 = 55.6 → 56
+    assert.equal(result.sevenDay, 56);
+    assert.equal(result.sevenDayWindowType, 'cycle');
     assert.equal(result.sevenDayTokens, 310_000_000);
     assert.equal(result.fiveHourResetAt, null);
     assert.equal(result.sevenDayResetAt, null);
@@ -160,7 +167,7 @@ describe('getGlmUsage', () => {
     const result = await getGlmUsage(createMockDeps({
       fetchGlmApi: async () => ({
         fiveHourPct: 100,
-        tokens24h: 1_000, // Very low 24h → very high 7d%
+        tokens24h: 1_000, // Very low 24h → small calibrated limit → very high 7d%
         tokens7d: 10_000_000, // But lots of 7d tokens
       }),
     }));
@@ -251,8 +258,8 @@ describe('getGlmUsage', () => {
     assert.equal(result, null);
   });
 
-  it('calculates 7d percentage correctly: verification formula', async () => {
-    // R5 verification: (310M × 10) / (55.8M × 7) = 7.94%
+  it('calculates 7d percentage correctly: calibrated formula', async () => {
+    // Calibrated: limit7d = 55.8M * 100 / 10 = 558M; 7d% = 310M / 558M * 100 = 55.55% → 56
     const result = await getGlmUsage(createMockDeps({
       fetchGlmApi: async () => ({
         fiveHourPct: 10,
@@ -261,6 +268,179 @@ describe('getGlmUsage', () => {
       }),
     }));
 
-    assert.equal(result.sevenDay, 8); // Math.round(7.94) = 8
+    assert.equal(result.sevenDay, 56); // Math.round(55.55) = 56
+  });
+
+  // ---- Calibration-specific tests ----
+
+  it('hides 7d when subscription time is unknown', async () => {
+    // No subscription time → can't compute fixed-cycle 7d
+    const result = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 5,
+        tokens24h: 50_000_000,
+        tokens7d: 200_000_000,
+      }),
+      readCalibrationFields: () => null,
+    }));
+
+    assert.notEqual(result, null);
+    assert.equal(result.fiveHour, 5);
+    assert.equal(result.sevenDay, null);
+  });
+
+  it('calibrates and uses calibrated limit when fiveHourPct >= 10%', async () => {
+    let writtenData = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 20,
+        tokens24h: 100_000_000,
+        tokens7d: 250_000_000,
+      }),
+      writeCache: (data) => { writtenData = data; },
+    }));
+
+    // Calibrated limit = 100M * 100 / 20 = 500M
+    assert.notEqual(writtenData, null);
+    assert.equal(writtenData.calibratedLimit7d, 500_000_000);
+    assert.ok(writtenData.calibratedAt != null);
+    // 7d% = 250M / 500M * 100 = 50
+    assert.equal(writtenData.sevenDay, 50);
+  });
+
+  it('7d% does NOT change when fiveHourPct drops after calibration', async () => {
+    const FIXED_NOW = 1700000000000;
+
+    // First call: calibrate with fiveHourPct=50%
+    let writtenFirst = null;
+    const result1 = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 50,
+        tokens24h: 100_000_000,
+        tokens7d: 200_000_000,
+      }),
+      writeCache: (data) => { writtenFirst = data; },
+      readCalibrationFields: () => ({ subscriptionTimeMs: FIXED_SUB_TIME }),
+      now: () => FIXED_NOW,
+    }));
+
+    // Calibrated limit = 100M * 100 / 50 = 200M
+    // 7d% = 200M / 200M * 100 = 100
+    assert.equal(result1.sevenDay, 100);
+    const calibratedLimit = writtenFirst.calibratedLimit7d;
+
+    // Second call: fiveHourPct drops to 10% (5h window rolled over), same tokens
+    const result2 = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 10, // Dropped due to 5h rollover
+        tokens24h: 100_000_000,
+        tokens7d: 200_000_000,
+      }),
+      readCalibrationFields: () => ({
+        calibratedLimit7d: calibratedLimit,
+        calibratedAt: FIXED_NOW, // Recent — no recalibration needed
+        subscriptionTimeMs: FIXED_SUB_TIME,
+      }),
+      now: () => FIXED_NOW + 60_000, // 1 minute later
+    }));
+
+    // 7d% should be the SAME — calibrated limit is still 200M
+    assert.equal(result2.sevenDay, 100);
+  });
+
+  it('uses cached calibration when fiveHourPct is null', async () => {
+    let writtenData = null;
+    const result = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: null,
+        tokens24h: 50_000_000,
+        tokens7d: 200_000_000,
+      }),
+      writeCache: (data) => { writtenData = data; },
+      readCalibrationFields: () => ({
+        calibratedLimit7d: 500_000_000,
+        calibratedAt: Date.now(),
+        subscriptionTimeMs: FIXED_SUB_TIME,
+      }),
+    }));
+
+    assert.notEqual(result, null);
+    // No new calibration (fiveHourPct null), but uses cached limit
+    assert.equal(writtenData.calibratedLimit7d, 500_000_000);
+    // 7d% = 200M / 500M * 100 = 40
+    assert.equal(result.sevenDay, 40);
+  });
+
+  it('recalibrates after 24h when fiveHourPct >= 10%', async () => {
+    const OLD_NOW = 1700000000000;
+    const NEW_NOW = OLD_NOW + 25 * 60 * 60 * 1000; // 25h later
+
+    let writtenData = null;
+    const result = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 30,
+        tokens24h: 80_000_000,
+        tokens7d: 300_000_000,
+      }),
+      writeCache: (data) => { writtenData = data; },
+      readCalibrationFields: () => ({
+        calibratedLimit7d: 999_000_000, // Old stale limit
+        calibratedAt: OLD_NOW,
+        subscriptionTimeMs: FIXED_SUB_TIME,
+      }),
+      now: () => NEW_NOW,
+    }));
+
+    // Should recalibrate: new limit = 80M * 100 / 30 = 266.67M (not rounded)
+    assert.ok(Math.abs(writtenData.calibratedLimit7d - 80_000_000 * 100 / 30) < 1);
+    assert.equal(writtenData.calibratedAt, NEW_NOW);
+  });
+
+  it('keeps old calibration when recalibration is due but fiveHourPct < 10%', async () => {
+    const OLD_NOW = 1700000000000;
+    const NEW_NOW = OLD_NOW + 25 * 60 * 60 * 1000; // 25h later
+
+    let writtenData = null;
+    const result = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 5, // Below threshold
+        tokens24h: 80_000_000,
+        tokens7d: 300_000_000,
+      }),
+      writeCache: (data) => { writtenData = data; },
+      readCalibrationFields: () => ({
+        calibratedLimit7d: 500_000_000,
+        calibratedAt: OLD_NOW,
+        subscriptionTimeMs: FIXED_SUB_TIME,
+      }),
+      now: () => NEW_NOW,
+    }));
+
+    // Should keep old calibration (fiveHourPct too low to recalibrate)
+    assert.equal(writtenData.calibratedLimit7d, 500_000_000);
+    assert.equal(writtenData.calibratedAt, OLD_NOW);
+    // But still use the old calibrated limit for calculation
+    // 7d% = 300M / 500M * 100 = 60
+    assert.equal(result.sevenDay, 60);
+  });
+
+  it('carries calibration through error states', async () => {
+    const error = new Error('Auth failed: 401');
+    error.name = 'GlmAuthError';
+
+    let writtenData = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => { throw error; },
+      writeCache: (data) => { writtenData = data; },
+      readCalibrationFields: () => ({
+        calibratedLimit7d: 500_000_000,
+        calibratedAt: 1700000000000,
+      }),
+    }));
+
+    assert.notEqual(writtenData, null);
+    assert.equal(writtenData.isError, true);
+    // Calibration data should survive the error
+    assert.equal(writtenData.calibratedLimit7d, 500_000_000);
   });
 });

@@ -111,7 +111,7 @@ npm run build
 
 ```
 [GLM-5.1] | project-name git:(branch*)
-Context ███░░░░░░░ 29% | Usage ██░░░░░░░░ 24% (5h) | 7d █░░░░░░░░░ 15% (347M / 7d)
+Context ██░░░░░░ 29% | Usage ██░░░░░░ 24% (5h) | 7d █░░░░░░░ 15% (347M / 7d)
 2 CLAUDE.md | 6 MCPs | 3 hooks
 ```
 
@@ -217,6 +217,6 @@ npm install --production
 - 7 天用量估算：`7d_pct = (7d_tokens * 5h_pct) / (24h_tokens * 7)`
 - 文件缓存 + TTL 机制（5 分钟缓存，45-75s 错误重试）
 - 统一使用英文 `|` 分隔符（单空格），降低宽度占用
-- Bar 宽度 100%（不缩放），保持上下文和用量条视觉一致
+- Bar 宽度 0.8 缩放，保持上下文和用量条视觉一致且防止换行
 - token 数量向下取整（如 347.8M → 347M）
 - statusLine 通过 `--env-file` 传递 GLM 认证变量，避免环境变量丢失

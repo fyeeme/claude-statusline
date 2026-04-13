@@ -17,6 +17,12 @@ export interface CachedUsageData {
   ttlMs: number;
   /** If true, this entry represents a failure state (e.g. auth error) */
   isError?: boolean;
+  /** Calibrated 7-day token limit (survives cache TTL via readCalibrationFields) */
+  calibratedLimit7d?: number;
+  /** Timestamp of last successful calibration (ms since epoch) */
+  calibratedAt?: number;
+  /** Inferred subscription time in ms since epoch (survives cache TTL via readCalibrationFields) */
+  subscriptionTimeMs?: number;
 }
 
 const CACHE_FILENAME = '.usage-cache.json';
@@ -68,6 +74,39 @@ export function readCache(currentPlatform: UsagePlatform): CachedUsageData | nul
   }
 }
 
+/** Read calibration fields from cache, ignoring TTL.
+ *  Returns calibratedLimit7d, calibratedAt, and subscriptionTimeMs — these persist across cache TTL cycles. */
+export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7d' | 'calibratedAt' | 'subscriptionTimeMs'> | null {
+  const cachePath = getCachePath();
+  try {
+    if (!fs.existsSync(cachePath)) {
+      return null;
+    }
+
+    const raw = fs.readFileSync(cachePath, 'utf-8');
+    const entry: CachedUsageData = JSON.parse(raw);
+
+    if (entry.calibratedLimit7d != null && entry.calibratedAt != null) {
+      return {
+        calibratedLimit7d: entry.calibratedLimit7d,
+        calibratedAt: entry.calibratedAt,
+        subscriptionTimeMs: entry.subscriptionTimeMs,
+      };
+    }
+
+    // Also return subscription-only data (no calibration yet)
+    if (entry.subscriptionTimeMs != null) {
+      return {
+        subscriptionTimeMs: entry.subscriptionTimeMs,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Write usage data to cache. Creates the cache directory if needed. */
 export function writeCache(data: Omit<CachedUsageData, 'timestamp'>): void {
   const cachePath = getCachePath();
@@ -109,6 +148,55 @@ export function getRateLimitedTtlMs(retryCount: number = 1): number {
   return capped + jitter;
 }
 
+const CYCLE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Infer subscription time from TIME_LIMIT.nextResetTime (monthly reset = subscription anniversary).
+ *  Extracts day-of-month and time-of-day from the monthly reset timestamp,
+ *  then finds the most recent occurrence of that day+time before now. */
+export function inferSubscriptionTime(timeLimitResetMs: number): number {
+  const resetDate = new Date(timeLimitResetMs);
+  const day = resetDate.getUTCDate();
+  const hours = resetDate.getUTCHours();
+  const minutes = resetDate.getUTCMinutes();
+  const seconds = resetDate.getUTCSeconds();
+
+  // Find the most recent occurrence of this day+time before now
+  const now = new Date();
+
+  // Try current month
+  let candidate = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day, hours, minutes, seconds);
+  if (candidate > Date.now()) {
+    // Use previous month
+    candidate = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, day, hours, minutes, seconds);
+  }
+
+  // Handle month-end edge case: e.g., day=31 in a 30-day month
+  // Date.UTC rolls over (Jan 31 → Feb 3), so check if the month matches
+  const candidateDate = new Date(candidate);
+  const expectedMonth = candidate > Date.now()
+    ? now.getUTCMonth()
+    : now.getUTCMonth() - 1;
+  const adjustedExpectedMonth = ((expectedMonth % 12) + 12) % 12;
+
+  if (candidateDate.getUTCMonth() !== adjustedExpectedMonth) {
+    // Rolled over — use the last day of the target month
+    // Last day of month = day 0 of next month
+    const targetMonth = adjustedExpectedMonth;
+    const targetYear = candidateDate.getUTCFullYear();
+    const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+    candidate = Date.UTC(targetYear, targetMonth, lastDay, hours, minutes, seconds);
+  }
+
+  return candidate;
+}
+
+/** Compute the current 7-day cycle start from subscription time.
+ *  Returns the most recent subscriptionTime + n * 7d that is <= nowMs. */
+export function computeCycleStart(subscriptionTimeMs: number, nowMs: number): number {
+  const n = Math.floor((nowMs - subscriptionTimeMs) / CYCLE_MS);
+  return subscriptionTimeMs + n * CYCLE_MS;
+}
+
 /** Convert a CachedUsageData entry back to UsageData-compatible format */
 export function cacheToUsageData(cached: CachedUsageData): {
   fiveHour: number | null;
@@ -119,6 +207,9 @@ export function cacheToUsageData(cached: CachedUsageData): {
   sevenDayWindowType: UsageWindowType;
   platform: UsagePlatform;
   sevenDayTokens?: number;
+  calibratedLimit7d?: number;
+  calibratedAt?: number;
+  subscriptionTimeMs?: number;
 } {
   return {
     fiveHour: cached.fiveHour,
@@ -129,5 +220,8 @@ export function cacheToUsageData(cached: CachedUsageData): {
     sevenDayWindowType: cached.sevenDayWindowType,
     platform: cached.platform,
     sevenDayTokens: cached.sevenDayTokens,
+    calibratedLimit7d: cached.calibratedLimit7d,
+    calibratedAt: cached.calibratedAt,
+    subscriptionTimeMs: cached.subscriptionTimeMs,
   };
 }
