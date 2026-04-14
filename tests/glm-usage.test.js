@@ -189,6 +189,29 @@ describe('getGlmUsage', () => {
     assert.equal(result, null);
   });
 
+  it('hides 7d on first call (no cached subscription time) even when API returns tokens', async () => {
+    // First call after cache clear: no subscriptionTimeMs → rolling 7d query → skip 7d display
+    // Subscription time is inferred from timeLimitResetTime and cached for next call
+    let cacheWritten = null;
+    const result = await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 20,
+        tokens24h: 100_000_000,
+        tokens7d: 400_000_000, // Rolling 7d — inflated
+        timeLimitResetTime: new Date('2026-04-30T07:43:12.000Z').getTime(),
+      }),
+      writeCache: (data) => { cacheWritten = data; },
+      readCalibrationFields: () => null, // No cached subscription time
+    }));
+
+    assert.notEqual(result, null);
+    assert.equal(result.fiveHour, 20);
+    // 7d must be null — we used rolling query, not fixed cycle
+    assert.equal(result.sevenDay, null);
+    // But subscription time should be inferred and cached for next call
+    assert.notEqual(cacheWritten.subscriptionTimeMs, null);
+  });
+
   it('handles auth failure gracefully', async () => {
     const error = new Error('Auth failed: 401');
     error.name = 'GlmAuthError';

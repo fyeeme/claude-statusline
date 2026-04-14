@@ -322,9 +322,11 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       calibratedAt = nowMs;
     }
 
-    // Calculate 7d% — only when we have both subscription time (fixed cycle) and calibrated limit
-    const hasSubscriptionTime = effectiveSubscriptionTime != null;
-    if (hasSubscriptionTime && calibratedLimit7d != null && calibratedLimit7d > 0 && results.tokens7d >= MIN_TOKENS_FOR_7D) {
+    // Calculate 7d% — only when query used fixed-cycle boundaries (cycleStart != null)
+    // On first call (no cached subscriptionTimeMs), cycleStart is undefined so we used rolling 7d — skip 7d display
+    // to avoid showing inflated rolling data as fixed-cycle data. Subscription time is inferred and cached for next call.
+    const usedFixedCycle = cycleStart != null;
+    if (usedFixedCycle && calibratedLimit7d != null && calibratedLimit7d > 0 && results.tokens7d >= MIN_TOKENS_FOR_7D) {
       // Fixed-cycle path: tokens from cycle start to now / calibrated limit
       const raw7d = (results.tokens7d / calibratedLimit7d) * 100;
       sevenDay = clamp(Math.round(raw7d), 0, 100);
