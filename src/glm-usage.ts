@@ -297,7 +297,7 @@ export interface GlmUsageDeps {
   fetchGlmApi: (baseDomain: string, headers: Record<string, string>, cycleStart?: number, appendLog?: (line: string) => void) => Promise<GlmApiResults>;
   fetchGlmQuotaOnly: (baseDomain: string, headers: Record<string, string>, appendLog?: (line: string) => void) => Promise<GlmQuotaResults>;
   getGlmHeaders: () => Record<string, string> | null;
-  readCalibrationFields: () => { calibratedLimit7d?: number; calibratedAt?: number; calibratedAtPct?: number; subscriptionTimeMs?: number; sevenDay?: number | null; sevenDayTokens?: number; sevenDayStartAt?: number | null } | null;
+  readCalibrationFields: () => { calibratedLimit7d?: number; calibratedAt?: number; calibratedAtPct?: number; subscriptionTimeMs?: number; sevenDay?: number | null; sevenDayTokens?: number; sevenDayStartAt?: number | null; milestoneSamples?: Record<string, number[]> } | null;
   now: () => number;
   /** Cache TTL in ms for 7d usage data (default: fiveHourRefreshSec * 1000) */
   cacheTtlMs: number;
@@ -365,8 +365,9 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       const quotaResult = await deps.fetchGlmQuotaOnly(baseDomain, headers, deps.appendLog);
       const newFiveHour = quotaResult.fiveHourPct;
 
-      // Milestone detected → upgrade to full refresh
-      const isMilestone = newFiveHour != null && newFiveHour > 0 && newFiveHour % 10 === 0;
+      // Milestone detected → upgrade to full refresh (sample at pct+1: 11%, 21%... or 100%)
+      const isMilestone = (newFiveHour != null && newFiveHour > 1 && newFiveHour % 10 === 1)
+        || newFiveHour === 100;
       if (isMilestone) {
         deps.appendLog(`cache=5h-MILESTONE 5h=${newFiveHour}% → full refresh`);
         // Fall through to full refresh below
@@ -392,6 +393,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
           fiveHourFetchedAt: nowMs,
           sevenDayStartAt: cached.sevenDayStartAt,
           sevenDayResetAt: cached.sevenDayResetAt,
+          milestoneSamples: cached.milestoneSamples,
         }, cached.timestamp);
 
         deps.appendLog(`cache=5h-REFRESH 5h=${newFiveHour ?? '-'}% 7d=${cached.sevenDay ?? '-'}%(${cached.sevenDayTokens ? Math.floor(cached.sevenDayTokens / 1e6) : '-'}M)`);
@@ -463,20 +465,102 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     let calibratedAt: number | undefined = calibration?.calibratedAt;
     let calibratedAtPct: number | undefined = calibration?.calibratedAtPct;
 
+    // --- Milestone samples for averaging calibration ---
+    const MAX_SAMPLES_PER_MILESTONE = 10;
+    let milestoneSamples: Record<string, number[]> | undefined = calibration?.milestoneSamples
+      ? { ...calibration.milestoneSamples }
+      : undefined;
+
+    // Clear samples on new cycle
+    const prevCycleStartForSamples = calibration?.sevenDayStartAt;
+    const effectiveCycleStartForSamples = effectiveSubscriptionTime != null
+      ? computeCycleStart(effectiveSubscriptionTime, nowMs)
+      : undefined;
+    if (effectiveCycleStartForSamples != null
+      && prevCycleStartForSamples != null
+      && effectiveCycleStartForSamples !== prevCycleStartForSamples) {
+      milestoneSamples = undefined;
+    }
+
     const canCalibrate = fiveHour !== null
       && fiveHour > 0
       && results.tokens5h > 0;
 
-    // Recalibrate at 5h% milestones (multiples of 10) for stable estimates
-    const isMilestone = fiveHour != null && fiveHour > 0 && fiveHour % 10 === 0;
+    // Collect sample at milestone+1 (11%, 21%, 31%...) and attribute to milestone (10%, 20%, 30%).
+    // At pct+1, tokens5h has fully settled to reflect ~pct worth of tokens,
+    // avoiding the "just crossed threshold" low-bias from sampling at exact milestone.
+    // 100% triggers calibration directly: tokens5h × 5 (tokens5h ≈ full 5h budget).
+    const isMilestone = (fiveHour != null && fiveHour > 1 && fiveHour % 10 === 1)
+      || fiveHour === 100;
+    if (fiveHour === 100 && canCalibrate) {
+      // 100%: direct calculation, no milestone sampling
+      const hundredPctLimit = results.tokens5h * 5;
+      if (calibratedLimit7d != null && hundredPctLimit < calibratedLimit7d) {
+        deps.appendLog(
+          `warning=CALIBRATION_REGRESSION old=${Math.floor(calibratedLimit7d / 1e6)}M new=${Math.floor(hundredPctLimit / 1e6)}M at 100%`,
+        );
+        // Keep old value
+      } else {
+        calibratedLimit7d = hundredPctLimit;
+        calibratedAt = nowMs;
+        calibratedAtPct = 100;
+      }
+    } else if (isMilestone && canCalibrate) {
+      const milestoneKey = String(fiveHour! - 1);
+      if (!milestoneSamples) milestoneSamples = {};
+      if (!milestoneSamples[milestoneKey]) milestoneSamples[milestoneKey] = [];
+      milestoneSamples[milestoneKey].push(results.tokens5h);
+      if (milestoneSamples[milestoneKey].length > MAX_SAMPLES_PER_MILESTONE) {
+        milestoneSamples[milestoneKey] = milestoneSamples[milestoneKey].slice(-MAX_SAMPLES_PER_MILESTONE);
+      }
+    }
+
+    // Calibrate using average of all milestone samples (skip if 100% already set calibratedLimit7d)
     const needsCalibration = calibratedLimit7d == null
       || calibratedAtPct == null
-      || isMilestone;
+      || (isMilestone && fiveHour !== 100);
 
-    if (needsCalibration && canCalibrate) {
-      calibratedLimit7d = (results.tokens5h * 100 * 5) / fiveHour;
-      calibratedAt = nowMs;
-      calibratedAtPct = fiveHour;
+    if (needsCalibration) {
+      // Try multi-point average calibration first
+      if (milestoneSamples && Object.keys(milestoneSamples).length > 0) {
+        let sum = 0;
+        let count = 0;
+        for (const pctStr of Object.keys(milestoneSamples)) {
+          const pct = Number(pctStr);
+          const arr = milestoneSamples[pctStr];
+          if (arr.length > 0 && pct > 0) {
+            const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+            sum += (avg * 100 * 5) / pct;
+            count++;
+          }
+        }
+        if (count > 0) {
+          calibratedLimit7d = sum / count;
+          calibratedAt = nowMs;
+          calibratedAtPct = fiveHour ?? undefined;
+        }
+      }
+      // Fallback to single-point calibration when no samples available
+      if (canCalibrate) {
+        const singlePoint = (results.tokens5h * 100 * 5) / fiveHour;
+        if (calibratedLimit7d == null || !milestoneSamples || Object.keys(milestoneSamples).length === 0) {
+          calibratedLimit7d = singlePoint;
+          calibratedAt = nowMs;
+          calibratedAtPct = fiveHour;
+        }
+      }
+
+      // Monotonic guard: calibratedLimit7d must not decrease within the same cycle
+      if (calibration?.calibratedLimit7d != null
+          && calibratedLimit7d != null
+          && calibratedLimit7d < calibration.calibratedLimit7d) {
+        deps.appendLog(
+          `warning=CALIBRATION_REGRESSION old=${Math.floor(calibration.calibratedLimit7d / 1e6)}M new=${Math.floor(calibratedLimit7d / 1e6)}M at ${fiveHour}%`,
+        );
+        calibratedLimit7d = calibration.calibratedLimit7d;
+        calibratedAt = calibration.calibratedAt;
+        calibratedAtPct = calibration.calibratedAtPct;
+      }
     }
 
     // Compute effective cycle start from subscription time (cached or just-inferred)
@@ -537,6 +621,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       fiveHourFetchedAt: nowMs,
       sevenDayStartAt,
       sevenDayResetAt,
+      milestoneSamples,
     });
 
     // Usage refresh log — always log on API call
@@ -560,8 +645,10 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       const monoTag = monotonicApplied
         ? `mono=${preMono7d}%→${sevenDay}%`
         : 'mono=-';
+      const sampleCount = milestoneSamples ? Object.values(milestoneSamples).reduce((s, a) => s + a.length, 0) : 0;
+      const sampleKeys = milestoneSamples ? Object.keys(milestoneSamples).join(',') : '-';
       deps.appendLog(
-        `calc limit7d=${limitM}M@${calibratedAtPct ?? '-'} subMs=${effectiveSubscriptionTime ?? '-'} cycle=${fmtTs(sevenDayStartAt)} 7d=${sevenDay ?? '-'}%(${mM(sevenDayTokens)}) ${monoTag} prev7d=${prev7dPct ?? '-'}%(${mM(prev7dTok)})`,
+        `calc limit7d=${limitM}M@${calibratedAtPct ?? '-'} samples=${sampleCount}(${sampleKeys}) subMs=${effectiveSubscriptionTime ?? '-'} cycle=${fmtTs(sevenDayStartAt)} 7d=${sevenDay ?? '-'}%(${mM(sevenDayTokens)}) ${monoTag} prev7d=${prev7dPct ?? '-'}%(${mM(prev7dTok)})`,
       );
     }
 

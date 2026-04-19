@@ -94,8 +94,13 @@ export interface MemoryInfo {
   usedPercent: number;
 }
 
-/** Check if usage limit is reached (either window at 100%) */
+/** Check if usage limit is reached.
+ *  For GLM: only 5h at 100% triggers (7d is an estimate, not reliable for limit detection).
+ *  For others: either window at 100% triggers. */
 export function isLimitReached(data: UsageData): boolean {
+  if (data.platform === 'glm') {
+    return data.fiveHour === 100;
+  }
   return data.fiveHour === 100 || data.sevenDay === 100;
 }
 

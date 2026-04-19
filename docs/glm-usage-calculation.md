@@ -176,7 +176,7 @@ function computeCycleStart(subscriptionTimeMs, nowMs) {
 
 API 不直接返回 7d 的 token 总预算，需要从 5h 数据推算。
 
-**推算公式：**
+**推算公式（单点）：**
 
 ```
 5h 总预算 = tokens5h × 100 / fiveHourPct
@@ -185,15 +185,27 @@ API 不直接返回 7d 的 token 总预算，需要从 5h 数据推算。
 即: calibratedLimit7d = (tokens5h × 100 × 5) / fiveHourPct
 ```
 
+**多点平均校准（消除采样偏差）：**
+
+由于 `fiveHourPct`（quota API）和 `tokens5h`（model-usage API）存在采样时差，单点校准有系统性低位偏差（刚跨入 10% 时 tokens 对应 ~9% 用量）。通过在每个里程碑收集多个 `tokens5h` 样本取平均值消除偏差：
+
+```
+milestoneSamples = { "10": [100M, 105M], "20": [210M, 215M], ... }
+
+对每个里程碑: avgTokens = sum(samples) / count(samples)
+多点平均: calibratedLimit7d = Σ(avgTokens × 500 / pct) / 里程碑数
+```
+
 **例子：**
 
 ```
-fiveHourPct = 40%, tokens5h = 200M
+milestoneSamples = { "10": [100M], "20": [210M] }
 
-5h 总预算 = 200M × 100 / 40 = 500M
-7d 总预算 = 500M × 5 = 2500M
+10%: 100M × 500 / 10 = 5000M
+20%: 210M × 500 / 20 = 5250M
+平均: (5000M + 5250M) / 2 = 5125M
 
-→ calibratedLimit7d = 2500M
+→ calibratedLimit7d = 5125M
 ```
 
 **校准触发条件（10% 里程碑）：**
@@ -209,9 +221,15 @@ needsCalibration = calibratedLimit7d == null      // 首次，从未校准过
 |------|---------|------|
 | 首次运行 | 触发 | `calibratedLimit7d == null` |
 | 5h = 47% | 不触发 | 47 不是 10 的倍数 |
-| 5h = 30% | 触发 | 30 是 10 的倍数 |
-| 5h = 10% → 10%（同窗口不同时刻） | 触发 | 每次到达里程碑都刷新，后期数据更准确 |
+| 5h = 30% | 触发 | 30 是 10 的倍数，同时收集样本 |
+| 5h = 10% → 10%（同窗口不同时刻） | 触发 | 每次到达里程碑都采集样本，FIFO 保留最近 10 个 |
 | 旧缓存（无 calibratedAtPct） | 触发 | 迁移兼容 |
+
+**采样规则：**
+- 每个里程碑最多保留 10 个样本（FIFO）
+- 新周期（`sevenDayStartAt` 变化）时清空所有样本
+- 非里程碑 full refresh 不采集新样本，但仍使用已有样本计算
+- 无样本数据时 fallback 到单点公式
 
 **为什么只在 10% 倍数校准：**
 
@@ -284,6 +302,7 @@ interface CachedUsageData {
   fiveHourResetAt?: number | null;   // 5h 窗口重置
   sevenDayStartAt?: number | null;   // 7d 周期起始
   sevenDayResetAt?: number | null;   // 7d 周期重置
+  milestoneSamples?: Record<string, number[]>; // 里程碑采样 { "10": [tokens, ...] }
 
   // ── 元数据 ──
   fiveHourWindowType: 'cycle';
@@ -345,6 +364,7 @@ getGlmUsage() 被调用（~每 300ms）
 | `calibratedAt` | 上次校准时间（诊断用） |
 | `calibratedAtPct` | 上次校准时的 5h 百分比（10% 阈值判断） |
 | `subscriptionTimeMs` | 订阅时间（推算周期起点） |
+| `milestoneSamples` | 里程碑 token 采样（多点平均校准） |
 | `sevenDay` | 上次 7d 百分比（monotonic 保障） |
 | `sevenDayTokens` | 上次 7d token 数（monotonic 保障） |
 | `sevenDayStartAt` | 上次周期起点（判断是否同一周期） |
@@ -418,23 +438,27 @@ calibratedAtPct 更新为 45
 
 ---
 
-## 防止回退的四道防线
+## 防止回退的五道防线
 
 ```
 防线 1: 10% 里程碑校准
   calibratedLimit7d 只在 fiveHour% 是 10 的倍数时才更新
   → 避免中间百分比带来的噪声
 
-防线 2: 单调递增保障
+防线 2: 多点平均采样
+  每个里程碑收集多个 tokens5h 样本取平均值
+  → 消除"刚跨入百分比档位"的系统性低位偏差
+
+防线 3: 单调递增保障
   即使 limit 重新校准导致百分比降低
   同一周期内 sevenDay 取 max(new, prev)
   → 兜底保证
 
-防线 3: 固定周期查询
+防线 4: 固定周期查询
   查询 model-usage 从 cycleStart（不是 now-7d）
   → 避免"旧周期 token 还在窗口内"导致的膨胀
 
-防线 4: 里程碑触发全量刷新
+防线 5: 里程碑触发全量刷新
   轻量刷新发现 5h% 是 10 的倍数时，升级为全量刷新
   → 确保校准始终在里程碑点采集数据，不会因 5h TTL 缩短而错过
 

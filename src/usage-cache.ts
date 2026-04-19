@@ -37,6 +37,8 @@ export interface CachedUsageData {
   sevenDayStartAt?: number | null;
   /** 7d cycle end timestamp (ms since epoch) = cycleStart + 7d */
   sevenDayResetAt?: number | null;
+  /** Milestone token samples for averaging calibration: { "10": [tokensAt10pct, ...], "20": [...] } */
+  milestoneSamples?: Record<string, number[]>;
 }
 
 const CACHE_FILENAME = '.usage-cache.json';
@@ -92,7 +94,7 @@ export function readCache(currentPlatform: UsagePlatform): CachedUsageData | nul
 
 /** Read calibration and monotonic fields from cache, ignoring TTL.
  *  These fields persist across cache TTL cycles for stable calculations. */
-export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7d' | 'calibratedAt' | 'calibratedAtPct' | 'subscriptionTimeMs' | 'sevenDay' | 'sevenDayTokens' | 'sevenDayStartAt'> | null {
+export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7d' | 'calibratedAt' | 'calibratedAtPct' | 'subscriptionTimeMs' | 'sevenDay' | 'sevenDayTokens' | 'sevenDayStartAt' | 'milestoneSamples'> | null {
   const cachePath = getCachePath();
   try {
     if (!fs.existsSync(cachePath)) {
@@ -111,6 +113,7 @@ export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7
         sevenDay: entry.sevenDay,
         sevenDayTokens: entry.sevenDayTokens,
         sevenDayStartAt: entry.sevenDayStartAt,
+        milestoneSamples: entry.milestoneSamples,
       };
     }
 
@@ -122,6 +125,7 @@ export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7
         sevenDay: entry.sevenDay,
         sevenDayTokens: entry.sevenDayTokens,
         sevenDayStartAt: entry.sevenDayStartAt,
+        milestoneSamples: entry.milestoneSamples,
       };
     }
 
@@ -131,15 +135,61 @@ export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7
   }
 }
 
+/** Merge new cache data with existing cache to protect calibration and monotonic fields
+ *  from being lost during concurrent writes from multiple Claude sessions. */
+function mergeWithExistingCache(data: Omit<CachedUsageData, 'timestamp'>, cachePath: string): Omit<CachedUsageData, 'timestamp'> {
+  let existing: CachedUsageData | null = null;
+  try {
+    if (fs.existsSync(cachePath)) {
+      existing = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    }
+  } catch {
+    return data;
+  }
+  if (!existing) return data;
+
+  const merged: Record<string, unknown> = { ...data };
+
+  // Preserve calibration fields: keep existing if new is undefined
+  const preserveFields = [
+    'calibratedLimit7d', 'calibratedAt', 'calibratedAtPct',
+    'subscriptionTimeMs', 'milestoneSamples',
+  ] as const;
+  for (const field of preserveFields) {
+    if (merged[field] === undefined && existing[field] !== undefined) {
+      merged[field] = existing[field];
+    }
+  }
+
+  // Monotonic: within same cycle, sevenDay and sevenDayTokens must not decrease
+  if (merged.sevenDayStartAt != null && existing.sevenDayStartAt != null
+      && merged.sevenDayStartAt === existing.sevenDayStartAt) {
+    if (merged.sevenDay !== null && existing.sevenDay != null
+        && typeof merged.sevenDay === 'number' && typeof existing.sevenDay === 'number'
+        && merged.sevenDay < existing.sevenDay) {
+      merged.sevenDay = existing.sevenDay;
+    }
+    if (merged.sevenDayTokens != null && existing.sevenDayTokens != null
+        && typeof merged.sevenDayTokens === 'number' && typeof existing.sevenDayTokens === 'number'
+        && merged.sevenDayTokens < existing.sevenDayTokens) {
+      merged.sevenDayTokens = existing.sevenDayTokens;
+    }
+  }
+
+  return merged as Omit<CachedUsageData, 'timestamp'>;
+}
+
 /** Write usage data to cache. Creates the cache directory if needed.
+ *  Merges with existing cache to protect calibration data from concurrent writes.
  *  @param preserveTimestamp If set, preserves the original timestamp (used by lightweight 5h refreshes to avoid resetting 7d TTL). */
 export function writeCache(data: Omit<CachedUsageData, 'timestamp'>, preserveTimestamp?: number): void {
   const cachePath = getCachePath();
   try {
     ensureCacheDir();
 
+    const merged = mergeWithExistingCache(data, cachePath);
     const entry: CachedUsageData = {
-      ...data,
+      ...merged,
       timestamp: preserveTimestamp ?? Date.now(),
     };
 

@@ -562,14 +562,14 @@ describe('getGlmUsage', () => {
         fiveHourFetchedAt: CACHE_TIME,
       }),
       fetchGlmQuotaOnly: async () => ({
-        fiveHourPct: 30, // Milestone! 30 % 10 === 0
+        fiveHourPct: 31, // Milestone! 31 % 10 === 1
         tokensLimitResetTime: null,
         timeLimitResetTime: null,
       }),
       fetchGlmApi: async () => {
         apiCalled = true;
         return {
-          fiveHourPct: 30,
+          fiveHourPct: 31,
           tokens5h: 100_000_000,
           tokens7d: 300_000_000,
           timeLimitResetTime: new Date('2026-04-30T07:43:12.000Z').getTime(),
@@ -579,7 +579,7 @@ describe('getGlmUsage', () => {
     }));
 
     assert.equal(apiCalled, true, 'Should call full API on milestone detection');
-    assert.equal(result.fiveHour, 30);
+    assert.equal(result.fiveHour, 31);
     assert.notEqual(result.sevenDay, 15, '7d should be recalculated, not preserved');
   });
 
@@ -641,5 +641,213 @@ describe('getGlmUsage', () => {
     assert.equal(writtenData.data.sevenDay, 15);
     assert.equal(writtenData.data.sevenDayTokens, 200_000_000);
     assert.equal(writtenData.preserveTs, CACHE_TIME);
+  });
+
+  // ---- Milestone sampling tests ----
+
+  it('collects samples at milestones and calibrates with average', async () => {
+    const NOW = 1700000000000;
+    // First call at 11% (milestone: key="10")
+    let written1 = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 11,
+        tokens5h: 100_000_000,
+        tokens7d: 500_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written1 = data; },
+      readCalibrationFields: () => ({ subscriptionTimeMs: FIXED_SUB_TIME }),
+      now: () => NOW,
+    }));
+
+    // Should have one sample at milestone key "10"
+    assert.deepEqual(written1.milestoneSamples, { '10': [100_000_000] });
+
+    // Second call at 21% (milestone: key="20")
+    let written2 = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 21,
+        tokens5h: 210_000_000,
+        tokens7d: 500_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written2 = data; },
+      readCalibrationFields: () => ({
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        milestoneSamples: { '10': [100_000_000] },
+        sevenDayStartAt: undefined,
+      }),
+      now: () => NOW + 60 * 1000,
+    }));
+
+    // Should have samples at both "10" and "20"
+    assert.deepEqual(written2.milestoneSamples, { '10': [100_000_000], '20': [210_000_000] });
+
+    // Average calibration: (100M*500/10 + 210M*500/20) / 2 = (5000M + 5250M) / 2 = 5125M
+    assert.ok(Math.abs(written2.calibratedLimit7d - 5_125_000_000) < 1);
+  });
+
+  it('falls back to single-point when no milestone samples', async () => {
+    const NOW = 1700000000000;
+    let written = null;
+    // Non-milestone (47%) with no prior samples → single-point fallback
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 47,
+        tokens5h: 100_000_000,
+        tokens7d: 300_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written = data; },
+      readCalibrationFields: () => ({ subscriptionTimeMs: FIXED_SUB_TIME }),
+      now: () => NOW,
+    }));
+
+    // No milestone samples collected (47 is not a milestone)
+    assert.equal(written.milestoneSamples, undefined);
+    // Single-point: 100M * 500 / 47 ≈ 1063.8M
+    const expected = 100_000_000 * 500 / 47;
+    assert.ok(Math.abs(written.calibratedLimit7d - expected) < 1);
+  });
+
+  it('clears samples on new cycle', async () => {
+    const NOW = 1700000000000;
+    const oldCycleStart = FIXED_SUB_TIME + Math.floor((NOW - FIXED_SUB_TIME) / CYCLE_MS) * CYCLE_MS;
+    const newCycleStart = oldCycleStart + CYCLE_MS;
+
+    let written = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 11,
+        tokens5h: 50_000_000,
+        tokens7d: 100_000_000,
+        tokensLimitResetTime: newCycleStart + 5 * 3600 * 1000,
+        timeLimitResetTime: newCycleStart + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written = data; },
+      readCalibrationFields: () => ({
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        milestoneSamples: { '10': [100_000_000], '20': [200_000_000] },
+        sevenDayStartAt: oldCycleStart,
+      }),
+      // Move time past old cycle so a new cycle starts
+      now: () => newCycleStart + 60 * 1000,
+    }));
+
+    // Samples should be cleared (new cycle) then fresh one at milestone key "10" added
+    assert.deepEqual(written.milestoneSamples, { '10': [50_000_000] });
+  });
+
+  it('truncates samples to max 10 per milestone', async () => {
+    const NOW = 1700000000000;
+    const existingSamples = [];
+    for (let i = 0; i < 9; i++) existingSamples.push(100_000_000 + i * 1_000_000);
+
+    let written = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 11,
+        tokens5h: 115_000_000,
+        tokens7d: 500_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written = data; },
+      readCalibrationFields: () => ({
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        milestoneSamples: { '10': existingSamples },
+        sevenDayStartAt: undefined,
+      }),
+      now: () => NOW,
+    }));
+
+    // 9 existing + 1 new = 10, no truncation
+    assert.equal(written.milestoneSamples['10'].length, 10);
+    assert.equal(written.milestoneSamples['10'][9], 115_000_000);
+    // First sample preserved
+    assert.equal(written.milestoneSamples['10'][0], 100_000_000);
+
+    // Now add one more to trigger truncation
+    const tenSamples = [...written.milestoneSamples['10']];
+    let written2 = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 11,
+        tokens5h: 120_000_000,
+        tokens7d: 500_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written2 = data; },
+      readCalibrationFields: () => ({
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        milestoneSamples: { '10': tenSamples },
+        sevenDayStartAt: undefined,
+      }),
+      now: () => NOW + 60 * 1000,
+    }));
+
+    // Should be truncated to 10 (last 10 of 11)
+    assert.equal(written2.milestoneSamples['10'].length, 10);
+    // First sample should be the 2nd from previous batch (dropped the oldest)
+    assert.equal(written2.milestoneSamples['10'][0], 101_000_000);
+    assert.equal(written2.milestoneSamples['10'][9], 120_000_000);
+  });
+
+  it('uses existing samples during non-milestone full refresh', async () => {
+    const NOW = 1700000000000;
+    let written = null;
+    // 47% is NOT a milestone, but we have existing samples
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 47,
+        tokens5h: 100_000_000,
+        tokens7d: 300_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written = data; },
+      readCalibrationFields: () => ({
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        milestoneSamples: { '10': [100_000_000], '20': [210_000_000] },
+        sevenDayStartAt: undefined,
+      }),
+      now: () => NOW,
+    }));
+
+    // No new sample collected (47 is not milestone)
+    assert.deepEqual(written.milestoneSamples, { '10': [100_000_000], '20': [210_000_000] });
+    // Should use average from existing samples: (100M*500/10 + 210M*500/20) / 2 = 5125M
+    assert.ok(Math.abs(written.calibratedLimit7d - 5_125_000_000) < 1);
+  });
+
+  it('backward compatible with old cache without milestoneSamples', async () => {
+    const NOW = 1700000000000;
+    let written = null;
+    await getGlmUsage(createMockDeps({
+      fetchGlmApi: async () => ({
+        fiveHourPct: 11,
+        tokens5h: 80_000_000,
+        tokens7d: 300_000_000,
+        tokensLimitResetTime: NOW + 5 * 3600 * 1000,
+        timeLimitResetTime: NOW + 30 * 24 * 3600 * 1000,
+      }),
+      writeCache: (data) => { written = data; },
+      readCalibrationFields: () => ({
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        // No milestoneSamples field at all
+      }),
+      now: () => NOW,
+    }));
+
+    // Should work fine, create first sample
+    assert.deepEqual(written.milestoneSamples, { '10': [80_000_000] });
+    // Calibrated using the single sample
+    assert.equal(written.calibratedLimit7d, 80_000_000 * 500 / 10);
   });
 });
