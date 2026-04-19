@@ -60,6 +60,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
       forceLabel: true,
       windowType: ctx.usageData.sevenDayWindowType,
       tokenCount: ctx.usageData.sevenDayTokens,
+      showResetTime: display?.showUsageResetTime,
     });
     return `${usageLabel} ${weeklyOnlyPart}`;
   }
@@ -72,6 +73,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
     usageBarEnabled,
     barWidth,
     windowType: ctx.usageData.fiveHourWindowType,
+    showResetTime: display?.showUsageResetTime,
   });
 
   if (sevenDay !== null && sevenDay >= sevenDayThreshold) {
@@ -85,6 +87,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
       forceLabel: true,
       windowType: ctx.usageData.sevenDayWindowType,
       tokenCount: ctx.usageData.sevenDayTokens,
+      showResetTime: display?.showUsageResetTime,
     });
     return `${usageLabel} ${fiveHourPart} | ${sevenDayPart}`;
   }
@@ -113,6 +116,7 @@ function formatUsageWindowPart({
   forceLabel = false,
   windowType,
   tokenCount,
+  showResetTime,
 }: {
   label: string;
   percent: number | null;
@@ -123,6 +127,7 @@ function formatUsageWindowPart({
   forceLabel?: boolean;
   windowType?: UsageWindowType;
   tokenCount?: number;
+  showResetTime?: boolean;
 }): string {
   const usageDisplay = formatUsagePercent(percent, colors);
   const styledLabel = label(windowLabel, colors);
@@ -135,7 +140,13 @@ function formatUsageWindowPart({
   if (windowType === 'rolling') {
     suffix = ` (${styledLabel})`;
   } else if (windowType === 'cycle' && tokenCount != null && tokenCount > 0) {
-    suffix = ` (${formatTokenCount(tokenCount)} / ${styledLabel})`;
+    const reset = showResetTime ? formatResetTime(resetAt) : '';
+    suffix = reset
+      ? ` (${formatTokenCount(tokenCount)} / ${styledLabel}, ${t("format.resetsIn")} ${reset})`
+      : ` (${formatTokenCount(tokenCount)} / ${styledLabel})`;
+  } else if (windowType === 'cycle') {
+    const reset = showResetTime ? formatResetTime(resetAt) : '';
+    suffix = reset ? ` (${styledLabel}, ${t("format.resetsIn")} ${reset})` : ` (${styledLabel})`;
   }
 
   // For fixed windows (Anthropic), show reset time if available

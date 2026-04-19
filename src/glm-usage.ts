@@ -2,11 +2,10 @@ import type { UsageData, UsagePlatform, UsageWindowType } from './types.js';
 import type { CachedUsageData } from './usage-cache.js';
 import { readCache, writeCache, getErrorTtlMs, getRateLimitedTtlMs, cacheToUsageData, readCalibrationFields, inferSubscriptionTime, computeCycleStart } from './usage-cache.js';
 import { detectPlatform, getGlmBaseDomain } from './glm-detect.js';
+import { DEFAULT_CONFIG } from './config.js';
 
 const FETCH_TIMEOUT_MS = 5000;
-const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MIN_TOKENS_FOR_7D = 1000;
-const CALIBRATION_THRESHOLD_PCT = 10;
 const RECALIBRATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // ---- Response types ----
@@ -125,22 +124,22 @@ function getGlmHeaders(): Record<string, string> | null {
 
 interface GlmApiResults {
   fiveHourPct: number | null;
-  tokens24h: number;
+  tokens5h: number;
   tokens7d: number;
   timeLimitResetTime?: number | null;
+  /** TOKENS_LIMIT.nextResetTime — 5h window reset timestamp */
+  tokensLimitResetTime?: number | null;
 }
+
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 
 async function fetchGlmApi(baseDomain: string, headers: Record<string, string>, cycleStart?: number): Promise<GlmApiResults> {
   const now = new Date();
-  const ago24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const start7d = cycleStart != null ? new Date(cycleStart) : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const [quotaRes, usage24hRes, usage7dRes] = await Promise.all([
+  // Phase 1: quota + 7d usage in parallel (quota needed for 5h window start)
+  const [quotaRes, usage7dRes] = await Promise.all([
     fetchWithTimeout(`${baseDomain}/api/monitor/usage/quota/limit`, headers),
-    fetchWithTimeout(
-      `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(ago24h))}&endTime=${encodeURIComponent(formatTimestamp(now))}`,
-      headers,
-    ),
     fetchWithTimeout(
       `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(start7d))}&endTime=${encodeURIComponent(formatTimestamp(now))}`,
       headers,
@@ -160,6 +159,7 @@ async function fetchGlmApi(baseDomain: string, headers: Record<string, string>, 
   // Parse quota response
   let fiveHourPct: number | null = null;
   let timeLimitResetTime: number | null = null;
+  let tokensLimitResetTime: number | null = null;
   try {
     const quotaJson: QuotaResponse = await quotaRes.json();
     const limits = quotaJson?.data?.limits;
@@ -167,6 +167,9 @@ async function fetchGlmApi(baseDomain: string, headers: Record<string, string>, 
       const tokensLimit = limits.find((l) => l.type === 'TOKENS_LIMIT');
       if (tokensLimit && typeof tokensLimit.percentage === 'number' && Number.isFinite(tokensLimit.percentage)) {
         fiveHourPct = clamp(Math.round(tokensLimit.percentage), 0, 100);
+      }
+      if (tokensLimit && typeof tokensLimit.nextResetTime === 'number' && Number.isFinite(tokensLimit.nextResetTime)) {
+        tokensLimitResetTime = tokensLimit.nextResetTime;
       }
       const timeLimit = limits.find((l) => l.type === 'TIME_LIMIT');
       if (timeLimit && typeof timeLimit.nextResetTime === 'number' && Number.isFinite(timeLimit.nextResetTime)) {
@@ -178,19 +181,26 @@ async function fetchGlmApi(baseDomain: string, headers: Record<string, string>, 
     fiveHourPct = null;
   }
 
-  // Parse model-usage responses
-  let tokens24h = 0;
-  let tokens7d = 0;
-
-  try {
-    if (usage24hRes.ok) {
-      const usageJson: ModelUsageResponse = await usage24hRes.json();
-      tokens24h = extractTotalTokens(usageJson?.data);
+  // Phase 2: fetch exact 5h window usage using TOKENS_LIMIT.nextResetTime
+  let tokens5h = 0;
+  if (tokensLimitResetTime != null) {
+    const windowStart = new Date(tokensLimitResetTime - FIVE_HOUR_MS);
+    try {
+      const usage5hRes = await fetchWithTimeout(
+        `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(windowStart))}&endTime=${encodeURIComponent(formatTimestamp(now))}`,
+        headers,
+      );
+      if (usage5hRes.ok) {
+        const usageJson: ModelUsageResponse = await usage5hRes.json();
+        tokens5h = extractTotalTokens(usageJson?.data);
+      }
+    } catch {
+      // Defensive parsing
     }
-  } catch {
-    // Defensive parsing
   }
 
+  // Parse 7d usage
+  let tokens7d = 0;
   try {
     if (usage7dRes.ok) {
       const usageJson: ModelUsageResponse = await usage7dRes.json();
@@ -200,7 +210,7 @@ async function fetchGlmApi(baseDomain: string, headers: Record<string, string>, 
     // Defensive parsing
   }
 
-  return { fiveHourPct, tokens24h, tokens7d, timeLimitResetTime };
+  return { fiveHourPct, tokens5h, tokens7d, timeLimitResetTime, tokensLimitResetTime };
 }
 
 // ---- Error types ----
@@ -230,6 +240,8 @@ export interface GlmUsageDeps {
   getGlmHeaders: () => Record<string, string> | null;
   readCalibrationFields: () => { calibratedLimit7d?: number; calibratedAt?: number; subscriptionTimeMs?: number } | null;
   now: () => number;
+  /** Cache TTL in ms for 5h/7d usage data (default: 5 * 60 * 1000) */
+  cacheTtlMs: number;
 }
 
 const defaultDeps: GlmUsageDeps = {
@@ -241,6 +253,7 @@ const defaultDeps: GlmUsageDeps = {
   getGlmHeaders,
   readCalibrationFields,
   now: () => Date.now(),
+  cacheTtlMs: DEFAULT_CONFIG.usage.fiveHourRefreshSec * 1000,
 };
 
 /**
@@ -274,7 +287,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       platform: 'glm',
       fiveHour: null,
       sevenDay: null,
-      fiveHourWindowType: 'rolling',
+      fiveHourWindowType: 'cycle',
       sevenDayWindowType: 'cycle',
       ttlMs: getErrorTtlMs(),
       isError: true,
@@ -309,34 +322,39 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     let calibratedAt: number | undefined = calibration?.calibratedAt;
 
     const canCalibrate = fiveHour !== null
-      && fiveHour >= CALIBRATION_THRESHOLD_PCT
-      && results.tokens24h > 0;
+      && fiveHour > 0
+      && results.tokens5h > 0;
 
     // Determine whether to calibrate/recalibrate
     const needsCalibration = calibratedLimit7d == null
       || (calibratedAt != null && (nowMs - calibratedAt) >= RECALIBRATION_INTERVAL_MS);
 
     if (needsCalibration && canCalibrate) {
-      // Calibrate: estimate 7d token limit from 5h% + 24h tokens + 1:5 plan ratio
-      calibratedLimit7d = (results.tokens24h * 100) / fiveHour;
+      // Precise calibration: 5h window has exact token usage + percentage
+      // 5h_budget = tokens5h × 100 / fiveHour
+      // 7d_budget = 5h_budget × 7  (5h limit = daily limit on GLM platform)
+      calibratedLimit7d = (results.tokens5h * 100 * 7) / fiveHour;
       calibratedAt = nowMs;
     }
 
-    // Calculate 7d% — only when query used fixed-cycle boundaries (cycleStart != null)
-    // On first call (no cached subscriptionTimeMs), cycleStart is undefined so we used rolling 7d — skip 7d display
-    // to avoid showing inflated rolling data as fixed-cycle data. Subscription time is inferred and cached for next call.
-    const usedFixedCycle = cycleStart != null;
-    if (usedFixedCycle && calibratedLimit7d != null && calibratedLimit7d > 0 && results.tokens7d >= MIN_TOKENS_FOR_7D) {
-      // Fixed-cycle path: tokens from cycle start to now / calibrated limit
+    // Compute effective cycle start from subscription time (cached or just-inferred)
+    const effectiveCycleStart = effectiveSubscriptionTime != null
+      ? computeCycleStart(effectiveSubscriptionTime, nowMs)
+      : undefined;
+
+    // Calculate 7d% when subscription time is known (cached or just-inferred)
+    if (effectiveCycleStart != null && calibratedLimit7d != null && calibratedLimit7d > 0 && results.tokens7d >= MIN_TOKENS_FOR_7D) {
       const raw7d = (results.tokens7d / calibratedLimit7d) * 100;
       sevenDay = clamp(Math.round(raw7d), 0, 100);
       sevenDayTokens = results.tokens7d;
     }
-    // No fallback — when subscription time is unknown, hide 7d entirely (R7)
 
     if (fiveHour === null && sevenDay === null) {
       return null;
     }
+
+    const fiveHourResetAt = results.tokensLimitResetTime ?? null;
+    const sevenDayResetAt = effectiveCycleStart != null ? effectiveCycleStart + 7 * 24 * 60 * 60 * 1000 : null;
 
     // Write to cache
     deps.writeCache({
@@ -344,20 +362,22 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       fiveHour,
       sevenDay,
       sevenDayTokens,
-      fiveHourWindowType: 'rolling',
+      fiveHourWindowType: 'cycle',
       sevenDayWindowType: 'cycle',
-      ttlMs: DEFAULT_CACHE_TTL_MS,
+      ttlMs: deps.cacheTtlMs,
       calibratedLimit7d,
       calibratedAt,
       subscriptionTimeMs: effectiveSubscriptionTime,
+      fiveHourResetAt,
+      sevenDayResetAt,
     });
 
     return {
       fiveHour,
       sevenDay,
-      fiveHourResetAt: null,
-      sevenDayResetAt: null,
-      fiveHourWindowType: 'rolling',
+      fiveHourResetAt: fiveHourResetAt != null ? new Date(fiveHourResetAt) : null,
+      sevenDayResetAt: sevenDayResetAt != null ? new Date(sevenDayResetAt) : null,
+      fiveHourWindowType: 'cycle',
       sevenDayWindowType: sevenDay !== null ? 'cycle' : undefined,
       platform: 'glm',
       sevenDayTokens,
@@ -368,7 +388,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
         platform: 'glm',
         fiveHour: null,
         sevenDay: null,
-        fiveHourWindowType: 'rolling',
+        fiveHourWindowType: 'cycle',
         sevenDayWindowType: 'cycle',
         ttlMs: getErrorTtlMs(),
         isError: true,
@@ -380,8 +400,8 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     }
 
     if ((err as Error)?.name === 'GlmRetryableError') {
-      // Fall back to stale cached data if available
-      if (cached) {
+      // Fall back to stale cached data if available (but not error entries)
+      if (cached && !cached.isError) {
         return cacheToUsageData(cached);
       }
 
@@ -389,7 +409,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
         platform: 'glm',
         fiveHour: null,
         sevenDay: null,
-        fiveHourWindowType: 'rolling',
+        fiveHourWindowType: 'cycle',
         sevenDayWindowType: 'cycle',
         ttlMs: getRateLimitedTtlMs(1),
         isError: true,
@@ -401,7 +421,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     }
 
     // Timeout or unexpected error
-    if (cached) {
+    if (cached && !cached.isError) {
       return cacheToUsageData(cached);
     }
 

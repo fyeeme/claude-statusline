@@ -1,0 +1,99 @@
+{
+  "reviewer": "performance",
+  "findings": [
+    {
+      "id": "perf-glm-001",
+      "title": "Duplicate synchronous file I/O on every 300ms invocation (cache hit path)",
+      "severity": "medium",
+      "confidence": 0.88,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line_range": [53, 78, 82, 118],
+      "description": "On every statusline invocation (~300ms), the GLM cache-hit path calls both readCache() and readCalibrationFields(). Each function independently calls getCachePath() -> os.homedir() -> getHudPluginDir(), then performs existsSync + readFileSync + JSON.parse on the same file. This means 2x os.homedir(), 2x getHudPluginDir(), 2x existsSync, 2x readFileSync, and 2x JSON.parse of the same small JSON file on every single invocation.",
+      "impact": "While each individual call is fast (~sub-millisecond for a small file), this is a hot path called ~3 times/second. The duplicated syscalls and JSON parsing are unnecessary work. On a slow filesystem (network mount, NFS) or under memory pressure, the latency could be noticeably worse.",
+      "recommendation": "Combine readCache and readCalibrationFields into a single function that reads the file once, parses once, and returns both the cache entry (with TTL check) and the calibration fields. This halves the syscalls and JSON.parse overhead on the hot path."
+    },
+    {
+      "id": "perf-glm-002",
+      "title": "os.homedir() called redundantly on every invocation",
+      "severity": "low",
+      "confidence": 0.82,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line_range": [37, 41, 43, 50],
+      "description": "getCachePath() and ensureCacheDir() each call os.homedir() independently. On a cache-miss write path (which happens once per 5 minutes), getCachePath() is called in readCache, readCalibrationFields, and writeCache, plus ensureCacheDir() is called in writeCache. os.homedir() is a syscall that reads environment variables and potentially the passwd database on Unix. While typically fast, it is repeated work.",
+      "impact": "Low impact since os.homedir() is a cheap syscall. However, the readCache+readCalibrationFields duplication (finding 001) means os.homedir() is called 2x unnecessarily per invocation.",
+      "recommendation": "Cache the home directory value at module load time: `const HOME_DIR = os.homedir();`. This is safe because the home directory does not change during a process lifetime."
+    },
+    {
+      "id": "perf-glm-003",
+      "title": "writeCache performs 4 synchronous fs operations per cache write",
+      "severity": "low",
+      "confidence": 0.75,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line_range": [121, 145],
+      "description": "writeCache() performs: (1) existsSync via ensureCacheDir, (2) potentially mkdirSync, (3) writeFileSync to temp file, (4) renameSync to final path, (5) chmodSync on the final file. That's up to 5 synchronous fs operations. However, this only runs on cache miss (once per 5 minutes), so it is not on the hot path.",
+      "impact": "Negligible at the expected frequency (once per 5 minutes). The only scenario where this matters is if the cache is being thrashed by error states, but the jittered error TTL (45-75s) mitigates that.",
+      "recommendation": "No action needed. This is a cold path. The chmodSync call could be removed since writeFileSync already sets mode: 0o600 and rename preserves permissions on POSIX systems, but this is a minor cleanup, not a performance issue."
+    },
+    {
+      "id": "perf-glm-004",
+      "title": "Synchronous file I/O blocks the Node.js event loop on the hot path",
+      "severity": "medium",
+      "confidence": 0.80,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line_range": [53, 78],
+      "description": "readCache() uses existsSync and readFileSync, which are synchronous and block the Node.js event loop. Since main() is async and calls getGlmUsage() with await, the synchronous fs calls happen during an async operation. In Node.js, synchronous fs calls in an async context block the entire event loop for their duration. For a small local file this is typically sub-millisecond, but it prevents any other async callbacks from executing during that time.",
+      "impact": "In practice, the blocking duration for a small JSON file read is negligible (~0.1-0.5ms). The real concern is that this statusline process is short-lived (invoked, renders, exits), so there is no concurrent event loop contention to worry about. The process exits after rendering, so blocking the event loop has no observable impact on other requests.",
+      "recommendation": "No action needed for this specific use case. The process is short-lived and single-purpose. If the architecture ever changes to a long-running server, consider using fs.promises.readFile with a process-level cache for the parsed data."
+    },
+    {
+      "id": "perf-glm-005",
+      "title": "3 parallel HTTP fetches with 5s timeout could stall statusline display for up to 5 seconds on cache miss",
+      "severity": "medium",
+      "confidence": 0.85,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line_range": [133, 148],
+      "description": "On cache miss, getGlmUsage() makes 3 parallel fetch() calls with a 5-second timeout. The statusline rendering is blocked (awaited) until these complete or timeout. Since the statusline is invoked every ~300ms by Claude Code, a cache miss means the user sees no statusline update (or a delayed one) for up to 5 seconds. With a 5-minute cache TTL, this happens once per 5 minutes at most.",
+      "impact": "Once per 5 minutes, the statusline could freeze for up to 5 seconds. During this time, the user sees stale/no statusline data. This is a noticeable UX hiccup but not a performance bottleneck. The 5s timeout is reasonable for API calls that may traverse the internet.",
+      "recommendation": "Consider returning the cached (stale) data immediately if available (the retryable error path already does this at line 388, but timeout falls through to return null at line 411). The timeout path should also fall back to stale cache data. Additionally, consider reducing the timeout to 2-3s since these are usage monitoring endpoints, not critical API calls."
+    },
+    {
+      "id": "perf-glm-006",
+      "title": "Timeout error path discards stale cache data",
+      "severity": "low",
+      "confidence": 0.90,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line_range": [408, 414],
+      "description": "When fetchGlmApi throws a non-retryable, non-auth error (e.g., network timeout from AbortController), the code checks `if (cached)` and returns `cacheToUsageData(cached)`. However, `cached` was read at line 259 and was either null or stale (which is why we proceeded to fetch). If `cached` was stale (TTL expired), readCache already returned null, so `cached` is null here and the function returns null, discarding the stale data. The retryable error path (line 386-406) has the same issue but at least it writes an error-state cache entry.",
+      "impact": "On a timeout, the user gets no usage data displayed even though stale data exists in the cache file. This means a network hiccup causes the usage display to disappear until the next successful fetch. The stale data would be more useful than no data.",
+      "recommendation": "In the timeout/general error path, read the cache file directly (bypassing TTL) and return stale data if available, similar to how readCalibrationFields ignores TTL. This ensures the statusline always shows something rather than nothing."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "risk-glm-001",
+      "title": "Short-lived process mitigates most synchronous I/O concerns",
+      "description": "This statusline is invoked as a separate process by Claude Code every ~300ms. Each invocation is short-lived: read stdin, parse transcript, render output, exit. The process exits after a single render cycle, so event loop blocking from synchronous fs calls has no cascading effect. The primary risk is latency within a single invocation, not concurrency issues.",
+      "severity": "low"
+    },
+    {
+      "id": "risk-glm-002",
+      "title": "Cache miss frequency is low (once per 5 minutes) but could spike on errors",
+      "description": "The 5-minute cache TTL keeps API calls infrequent. However, if the GLM API returns errors, the error-state cache TTL is only 45-75s, meaning the system retries more frequently during outages. With exponential backoff capped at 5 minutes, this is bounded but could cause more frequent stalls.",
+      "severity": "low"
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "test-glm-001",
+      "title": "No measurement of synchronous I/O latency on the hot path",
+      "description": "There are no benchmarks or timing measurements for the readCache + readCalibrationFields path. While the theoretical concern is clear (duplicate file reads), the actual latency impact is unmeasured. A simple console.time() around the cache read path during development would quantify whether this matters.",
+      "recommendation": "Add temporary timing instrumentation around readCache + readCalibrationFields to measure actual wall-clock time per invocation."
+    },
+    {
+      "id": "test-glm-002",
+      "title": "No test for timeout fallback behavior with stale cache",
+      "description": "The timeout error path (finding 006) that discards stale cache data should have a test verifying that stale data is returned on timeout. The current code returns null on timeout when cache is stale, but this appears unintentional given that the retryable error path already returns stale data.",
+      "recommendation": "Add a test case: cache exists but is stale -> fetch times out -> expect stale cache data to be returned rather than null."
+    }
+  ]
+}

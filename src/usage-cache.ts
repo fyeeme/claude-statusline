@@ -23,6 +23,10 @@ export interface CachedUsageData {
   calibratedAt?: number;
   /** Inferred subscription time in ms since epoch (survives cache TTL via readCalibrationFields) */
   subscriptionTimeMs?: number;
+  /** 5h window reset timestamp (ms since epoch) from TOKENS_LIMIT.nextResetTime */
+  fiveHourResetAt?: number | null;
+  /** 7d cycle end timestamp (ms since epoch) = cycleStart + 7d */
+  sevenDayResetAt?: number | null;
 }
 
 const CACHE_FILENAME = '.usage-cache.json';
@@ -161,30 +165,25 @@ export function inferSubscriptionTime(timeLimitResetMs: number): number {
   const seconds = resetDate.getUTCSeconds();
 
   // Find the most recent occurrence of this day+time before now
-  const now = new Date();
+  const nowMs = Date.now();
+  const now = new Date(nowMs);
 
   // Try current month
-  let candidate = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day, hours, minutes, seconds);
-  if (candidate > Date.now()) {
-    // Use previous month
-    candidate = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, day, hours, minutes, seconds);
+  let candidateMonth = now.getUTCMonth();
+  let candidateYear = now.getUTCFullYear();
+  let candidate = Date.UTC(candidateYear, candidateMonth, day, hours, minutes, seconds);
+  if (candidate > nowMs) {
+    candidateMonth = candidateMonth - 1;
+    if (candidateMonth < 0) { candidateMonth = 11; candidateYear--; }
+    candidate = Date.UTC(candidateYear, candidateMonth, day, hours, minutes, seconds);
   }
 
   // Handle month-end edge case: e.g., day=31 in a 30-day month
   // Date.UTC rolls over (Jan 31 → Feb 3), so check if the month matches
   const candidateDate = new Date(candidate);
-  const expectedMonth = candidate > Date.now()
-    ? now.getUTCMonth()
-    : now.getUTCMonth() - 1;
-  const adjustedExpectedMonth = ((expectedMonth % 12) + 12) % 12;
-
-  if (candidateDate.getUTCMonth() !== adjustedExpectedMonth) {
-    // Rolled over — use the last day of the target month
-    // Last day of month = day 0 of next month
-    const targetMonth = adjustedExpectedMonth;
-    const targetYear = candidateDate.getUTCFullYear();
-    const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
-    candidate = Date.UTC(targetYear, targetMonth, lastDay, hours, minutes, seconds);
+  if (candidateDate.getUTCMonth() !== candidateMonth) {
+    const lastDay = new Date(Date.UTC(candidateYear, candidateMonth + 1, 0)).getUTCDate();
+    candidate = Date.UTC(candidateYear, candidateMonth, lastDay, hours, minutes, seconds);
   }
 
   return candidate;
@@ -214,8 +213,8 @@ export function cacheToUsageData(cached: CachedUsageData): {
   return {
     fiveHour: cached.fiveHour,
     sevenDay: cached.sevenDay,
-    fiveHourResetAt: null, // GLM doesn't provide reset timestamps
-    sevenDayResetAt: null,
+    fiveHourResetAt: cached.fiveHourResetAt != null ? new Date(cached.fiveHourResetAt) : null,
+    sevenDayResetAt: cached.sevenDayResetAt != null ? new Date(cached.sevenDayResetAt) : null,
     fiveHourWindowType: cached.fiveHourWindowType,
     sevenDayWindowType: cached.sevenDayWindowType,
     platform: cached.platform,

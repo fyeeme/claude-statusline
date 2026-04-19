@@ -1,0 +1,111 @@
+{
+  "reviewer": "reliability",
+  "findings": [
+    {
+      "id": "R1",
+      "severity": "high",
+      "confidence": 0.92,
+      "title": "Promise.all short-circuits: one API failure kills all three fetches",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts:138-148",
+      "description": "The three API calls (quota, usage24h, usage7d) are dispatched in a single Promise.all. If any one of them throws (timeout, network error, DNS failure), the entire Promise.all rejects and control jumps to the catch block. The other two responses are lost. The catch handler then falls through to the generic error path, which either returns stale cache or null -- losing the partial data that was successfully fetched.",
+      "impact": "A transient DNS blip on the 24h usage endpoint causes loss of the quota and 7d data too, even though those responses arrived fine. The statusline shows stale or no data for the entire 5-minute cache TTL.",
+      "recommendation": "Use Promise.allSettled instead of Promise.all. Check individual results for rejection and use whatever data arrived. Only throw GlmAuthError/GlmRetryableError if the quota endpoint itself fails with 401/403/429/5xx."
+    },
+    {
+      "id": "R2",
+      "severity": "medium",
+      "confidence": 0.85,
+      "title": "Stale cache fallback is unreachable when cache is TTL-expired",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts:259-262,388-390",
+      "description": "On line 259, readCache() returns null when the entry is TTL-expired. The variable 'cached' is therefore null when the API call is attempted. In the catch block at line 388, the GlmRetryableError handler checks 'if (cached)' -- but cached is null because readCache already rejected the stale entry. The stale-cache fallback on retryable errors is dead code when the cache expired naturally (the common case). It only works if readCache returns expired data, which it never does.",
+      "impact": "Every retryable error (429, 5xx) when the 5-minute TTL has elapsed results in null instead of stale data. The statusline shows no usage info instead of slightly stale info.",
+      "recommendation": "Either (a) have readCache accept a 'staleOk' parameter that returns expired entries marked as stale, or (b) perform a separate 'read stale cache' call inside the catch block when you need fallback data."
+    },
+    {
+      "id": "R3",
+      "severity": "medium",
+      "confidence": 0.78,
+      "title": "Cache write race: concurrent statusline invocations can clobber each other",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts:121-145",
+      "description": "The statusline is invoked every ~300ms. On a cache miss, getGlmUsage makes API calls (up to 5s). During that 5s window, approximately 16 additional statusline invocations will fire. Each one sees the same cache miss (the file is still stale/absent), starts its own API call, and when they complete, they all write to the cache file. The atomic write (writeFileSync to .tmp + renameSync) prevents corrupt partial writes, but the last writer wins -- and that might be an invocation that fetched with slightly older parameters or got a partial error response.",
+      "impact": "Thundering herd: up to 16 concurrent API calls to the GLM backend on each cache miss. This risks triggering rate limiting (429) on the GLM API, which then cascades into GlmRetryableError and error-cache writes. The cache also ends up with whichever response arrived last, not necessarily the freshest.",
+      "recommendation": "Add an in-process 'fetch-in-flight' guard: a module-level promise that is set when an API fetch starts and cleared when it completes. Subsequent invocations during the fetch window should either (a) return null immediately (skip) or (b) await the in-flight promise and use its result. Given this is a CLI process (not a long-running server), the 300ms invocation rate means the process likely exits and restarts each time, making an in-process guard only effective within a single invocation. A file-based lock (e.g., write a .fetching sentinel file, check before fetching) would work across invocations."
+    },
+    {
+      "id": "R4",
+      "severity": "low",
+      "confidence": 0.70,
+      "title": "renameSync atomicity is not guaranteed across filesystems",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts:132-134",
+      "description": "The atomic write pattern (writeFileSync to .tmp then renameSync) is atomic on POSIX when source and destination are on the same filesystem. However, if the cache directory is on a network mount (NFS, SMB) or a FUSE filesystem, rename may not be atomic. Additionally, on Windows, renameSync fails if the target file already exists (though this is a macOS/Linux project per CLAUDE.md).",
+      "impact": "In practice, the cache lives in ~/.claude/plugins/claude-hud/ which is on the local filesystem in virtually all deployments. This is a theoretical concern for unusual environments.",
+      "recommendation": "No action needed for the current deployment target (macOS/Linux local filesystem). If cross-platform or network-filesystem support is ever needed, use a write-then-rename-with-replace pattern or a proper lock file."
+    },
+    {
+      "id": "R5",
+      "severity": "low",
+      "confidence": 0.88,
+      "title": "AbortController cleanup is correct but fetch body leak is possible",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts:106-114",
+      "description": "The fetchWithTimeout function correctly clears the timeout in a finally block and uses AbortController.signal. However, when a timeout fires and the fetch is aborted, the Response object (if headers were received before abort) is not explicitly consumed. In Node.js 18+, this can leak the socket connection until the body is consumed or the response is explicitly cancelled. The AbortController aborts the fetch, but if the response started streaming, the underlying connection may not be immediately released.",
+      "impact": "Minor resource leak under sustained timeout conditions. In the worst case, 3 timed-out fetches per cache miss could hold 3 sockets briefly. Given the 5-minute cache TTL, this is at most 3 sockets every 5 minutes -- negligible.",
+      "recommendation": "Low priority. If desired, add response.body?.cancel() in the catch path, or use AbortSignal.timeout() (Node 17.3+) which handles cleanup more completely."
+    },
+    {
+      "id": "R6",
+      "severity": "medium",
+      "confidence": 0.82,
+      "title": "No status code check on usage24h and usage7d responses",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts:151-158",
+      "description": "Auth and rate-limit checks only examine the quotaRes status code (lines 151-158). The usage24hRes and usage7dRes status codes are checked only via .ok (lines 186, 195) -- a 401/403 on these endpoints silently falls through to the 'defensive parsing' catch, and tokens default to 0. This means the code can return data with fiveHour set but tokens24h=0 and tokens7d=0, which causes incorrect calibration (calibratedLimit7d becomes 0 or Infinity) and hides the 7d display.",
+      "impact": "If the quota endpoint returns 200 but the usage endpoints return 401 (different auth scopes), the code proceeds with zero token data. Calibration produces a zero or near-zero limit, making the 7d percentage either 0 or 100 incorrectly.",
+      "recommendation": "Check usage24hRes.status and usage7dRes.status for auth errors (401/403) alongside the quota check. If any response is 401/403, throw GlmAuthError before proceeding."
+    },
+    {
+      "id": "R7",
+      "severity": "low",
+      "confidence": 0.65,
+      "title": "Error cache with isError=true blocks all subsequent invocations for the TTL duration",
+      "location": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts:259-262,370-383",
+      "description": "When an error is cached (isError: true), readCache returns the entry, but line 260-261 checks '!cached.isError' and falls through to the API path. This is correct behavior -- error-cached entries do not short-circuit. However, if the API call then fails again with a different error type (e.g., first GlmAuthError, then AbortError), the catch block at line 409 checks 'if (cached)' for the generic error path. Since 'cached' was set at line 259 and is the error-cached entry, cacheToUsageData returns the error entry's null fields, resulting in a UsageData with fiveHour=null, sevenDay=null -- which then passes through to the renderer as a non-null UsageData object with empty fields.",
+      "impact": "The renderer receives a UsageData object where all fields are null rather than null itself. Whether this causes visual issues depends on the renderer's null-checking, but it is semantically wrong: the error entry should not be surfaced as valid usage data.",
+      "recommendation": "In the generic catch block (line 409), also check 'if (cached && !cached.isError)' before falling back to cached data."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RR1",
+      "severity": "low",
+      "title": "CLI process model limits thundering herd impact",
+      "description": "The 300ms statusline invocation rate may actually be a single process that reads stdin and exits, rather than a long-running polling loop. If each invocation is a separate process, the in-flight guard (R3) cannot work via module-level state. The file-based sentinel approach would be needed but adds complexity. The actual impact of R3 depends on Claude Code's process management model, which is not visible from the code alone."
+    },
+    {
+      "id": "RR2",
+      "severity": "low",
+      "title": "GLM API behavior under load is unknown",
+      "description": "The code assumes the GLM API returns standard HTTP status codes (401, 403, 429, 5xx). If the API returns 200 with an error body, or uses non-standard status codes, the error detection logic would miss it. The defensive catch blocks around JSON parsing partially mitigate this, but only by silently producing zero data."
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "TG1",
+      "title": "No test for concurrent cache writes",
+      "description": "There is no test verifying behavior when two getGlmUsage calls race to write the cache file simultaneously. The test suite uses mocked writeCache, which eliminates the file I/O entirely."
+    },
+    {
+      "id": "TG2",
+      "title": "No test for Promise.all partial failure",
+      "description": "No test covers the scenario where one of the three API calls fails while the others succeed. This is the core failure mode of R1."
+    },
+    {
+      "id": "TG3",
+      "title": "No test for stale-cache fallback being unreachable",
+      "description": "The test at line 245-271 ('falls back to stale error-cached data on retryable error') uses a mock readCache that returns stale data. But the real readCache returns null on TTL-expired entries, so this test does not reflect production behavior. A test with the real readCache (or a mock that mimics its TTL check) showing the fallback is unreachable would document this gap."
+    },
+    {
+      "id": "TG4",
+      "title": "No test for non-quota endpoint auth failure",
+      "description": "No test covers the scenario where quotaRes returns 200 but usage24hRes returns 401 (R6). This path would produce misleading zero-token data without any error."
+    }
+  ]
+}

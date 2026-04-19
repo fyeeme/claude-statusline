@@ -1,0 +1,136 @@
+{
+  "reviewer": "testing",
+  "findings": [
+    {
+      "id": "T-001",
+      "severity": "medium",
+      "title": "GLM fallback path in index.ts is never exercised end-to-end",
+      "description": "The main() function in index.ts (lines 84-88) has a GLM fallback: when getUsageFromStdin(stdin) returns null, it calls deps.getGlmUsage(). However, every test in index.test.js stubs getGlmUsage to return null. No test provides a getGlmUsage override that returns actual UsageData with platform:'glm', so the integration path that populates usageData from the GLM API is never verified to correctly flow through to the render context.",
+      "confidence": 0.85,
+      "files": [
+        "/Users/Young/Projects/professional/linzikg/claude-hud/src/index.ts",
+        "/Users/Young/Projects/professional/linzikg/claude-hud/tests/index.test.js"
+      ],
+      "branch": "if (!usageData) { usageData = await deps.getGlmUsage(); }",
+      "evidence": "All 6 occurrences of getGlmUsage in index.test.js use `getGlmUsage: async () => null`. No test verifies that a non-null GLM UsageData result is passed into the render context."
+    },
+    {
+      "id": "T-002",
+      "severity": "medium",
+      "title": "No render tests for GLM-specific window types (rolling/cycle) or token count display",
+      "description": "render/lines/usage.ts was modified to support GLM-specific rendering: rolling/cycle windowType labels, GLM threshold override (sevenDayThreshold=0 for GLM), and token count display via formatTokenCount. The render.test.js file has zero tests exercising these paths. There is no test that sets usageData.platform='glm' with rolling/cycle windowType, and no test verifying the '(310M / 7d)' token count suffix format.",
+      "confidence": 0.90,
+      "files": [
+        "/Users/Young/Projects/professional/linzikg/claude-hud/src/render/lines/usage.ts",
+        "/Users/Young/Projects/professional/linzikg/claude-hud/tests/render.test.js"
+      ],
+      "branch": "windowType === 'rolling' and windowType === 'cycle' in formatUsageWindowPart, plus sevenDayThreshold = isGlm ? 0 override",
+      "evidence": "Grep for 'rolling|cycle|tokenCount|sevenDayTokens|formatTokenCount|windowType' in render.test.js returns zero matches."
+    },
+    {
+      "id": "T-003",
+      "severity": "low",
+      "title": "extractTotalTokens is a private function with no direct test coverage",
+      "description": "extractTotalTokens() in glm-usage.ts handles three response formats (object with totalTokensUsage, object with modelSummaryList fallback, and array format). It is only tested indirectly through getGlmUsage integration tests. The modelSummaryList fallback path (line 85-88) and the array format path (line 92-93) are never explicitly targeted. If the API response format shifts, these branches could break silently since the mock always returns data that hits the totalTokensUsage path.",
+      "confidence": 0.70,
+      "files": [
+        "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts"
+      ],
+      "branch": "Three branches in extractTotalTokens: totalTokensUsage object, modelSummaryList fallback, array format",
+      "evidence": "extractTotalTokens is not exported. The mock fetchGlmApi returns objects that bypass the modelSummaryList and array branches. No test in glm-usage.test.js references extractTotalTokens."
+    },
+    {
+      "id": "T-004",
+      "severity": "low",
+      "title": "readCalibrationFields version-mismatch branch has no test",
+      "description": "readCalibrationFields in usage-cache.ts (line 94-98) has a calibrationVersion check: when the cached version does not match CALIBRATION_VERSION, it discards calibration data but preserves subscriptionTimeMs. This migration path is untested -- no test writes a cache entry with a mismatched calibrationVersion and verifies that subscriptionTimeMs survives while calibratedLimit7d is dropped.",
+      "confidence": 0.82,
+      "files": [
+        "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+        "/Users/Young/Projects/professional/linzikg/claude-hud/tests/usage-cache.test.js"
+      ],
+      "branch": "if (entry.calibrationVersion !== CALIBRATION_VERSION) at line 94",
+      "evidence": "Grep for 'calibrationVersion|CALIBRATION_VERSION' in tests/ returns zero matches. The readCalibrationFields tests all write entries with the current version (implicitly, by not setting calibrationVersion, which means undefined !== 2)."
+    },
+    {
+      "id": "T-005",
+      "severity": "low",
+      "title": "Retryable error with stale cache does not verify writeCache is called with rate-limited TTL",
+      "description": "When getGlmUsage encounters a GlmRetryableError with no cached data, it writes an error cache entry with getRateLimitedTtlMs(1). The test 'falls back to stale cache on retryable error' (line 231) verifies the null return but does not capture or assert on writeCache arguments. The GlmAuthError test does capture writeCache, but the retryable path's error caching behavior (TTL, isError flag, calibration preservation) is unverified.",
+      "confidence": 0.78,
+      "files": [
+        "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+        "/Users/Young/Projects/professional/linzikg/claude-hud/tests/glm-usage.test.js"
+      ],
+      "branch": "if ((err as Error)?.name === 'GlmRetryableError') error handler, specifically the writeCache call at lines 392-404",
+      "evidence": "Test at line 231 uses the default mock writeCache: () => {} which is a no-op. No assertions are made on what would be written."
+    },
+    {
+      "id": "T-006",
+      "severity": "low",
+      "title": "inferSubscriptionTime month-end edge case test has weak assertions",
+      "description": "The February edge case test for inferSubscriptionTime (line 180-192) asserts that the result is either Feb or Mar, and if Feb, the day is <= 28. It does not pin an exact expected date, making it a soft check that could pass even with a subtly wrong rollover calculation. The test also does not verify the critical 'day 31 in a 30-day month' scenario (e.g., reset on the 31st but the target month has only 30 days), which is the primary edge case the code handles.",
+      "confidence": 0.72,
+      "files": [
+        "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+        "/Users/Young/Projects/professional/linzikg/claude-hud/tests/usage-cache.test.js"
+      ],
+      "branch": "Month-end rollover correction at lines 191-198 in usage-cache.ts",
+      "evidence": "Test assertion: `assert.ok(subDate.getUTCMonth() === 2 || subDate.getUTCMonth() === 1)`. No test for day=31 in a 30-day month scenario."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "R-001",
+      "title": "GLM rendering regression risk due to missing render tests",
+      "description": "The usage.ts renderer has GLM-specific branches (rolling window suffix, cycle token count, threshold override) that are untested. Refactoring the render layer could silently break GLM display without any test failure.",
+      "severity": "medium"
+    },
+    {
+      "id": "R-002",
+      "title": "Cache migration path untested",
+      "description": "The calibrationVersion check in readCalibrationFields is designed to handle future formula changes. Without a test, a version bump could silently discard all users' calibration data or fail to migrate correctly.",
+      "severity": "low"
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "G-001",
+      "module": "glm-usage.ts",
+      "type": "untested_branch",
+      "summary": "extractTotalTokens modelSummaryList fallback and array format branches are only indirectly tested through mocks that always hit the primary path"
+    },
+    {
+      "id": "G-002",
+      "module": "usage-cache.ts",
+      "type": "untested_branch",
+      "summary": "readCalibrationFields calibrationVersion mismatch branch (line 94) has no test covering version migration"
+    },
+    {
+      "id": "G-003",
+      "module": "index.ts",
+      "type": "untested_branch",
+      "summary": "GLM fallback path (getGlmUsage returning non-null UsageData) is never exercised in index.test.js"
+    },
+    {
+      "id": "G-004",
+      "module": "render/lines/usage.ts",
+      "type": "missing_test_category",
+      "summary": "No tests for GLM-specific rendering: rolling/cycle window labels, token count suffix format, GLM threshold override"
+    },
+    {
+      "id": "G-005",
+      "module": "glm-usage.ts",
+      "type": "untested_branch",
+      "summary": "GlmRetryableError handler's writeCache call is not asserted on (error cache entry with rate-limited TTL)"
+    }
+  ],
+  "positive_notes": [
+    "glm-detect.ts is thoroughly tested with 11 cases covering all known domains, subdomain matching, case insensitivity, invalid URLs, and env var fallback.",
+    "getGlmUsage dependency injection pattern is well-designed -- GlmUsageDeps interface allows clean mocking without touching process.env or filesystem.",
+    "Calibration lifecycle is well tested: initial calibration, recalibration after 24h, skipping recalibration when fiveHourPct is too low, and calibration preservation through error states.",
+    "The first-call behavior (no subscription time, 7d hidden, subscription time inferred and cached) has a dedicated test verifying the complete flow.",
+    "Cache tests cover TTL expiry, platform mismatch, malformed JSON, file permissions, and error state entries.",
+    "formatTokenCount has comprehensive boundary tests including zero, sub-thousand, and floor behavior."
+  ]
+}

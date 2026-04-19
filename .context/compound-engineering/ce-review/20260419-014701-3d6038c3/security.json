@@ -1,0 +1,64 @@
+{
+  "reviewer": "security",
+  "findings": [
+    {
+      "id": "SEC-001",
+      "severity": "medium",
+      "confidence": 0.72,
+      "title": "SSRF via ANTHROPIC_BASE_URL allows requests to arbitrary hosts",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-detect.ts",
+      "line": 44,
+      "description": "getGlmBaseDomain() extracts the protocol+host from ANTHROPIC_BASE_URL and passes it directly to fetchGlmApi() which makes HTTP requests. While detectPlatform() restricts which hostnames are treated as 'glm', the actual HTTP requests in fetchGlmApi() do NOT validate that baseDomain matches a known GLM domain. If an attacker can control ANTHROPIC_BASE_URL (e.g., via a malicious Claude Code wrapper, .env file injection, or environment manipulation), they can make the plugin send the auth token to an attacker-controlled server. The token is sent in the Authorization header unmodified.",
+      "evidence": "In glm-usage.ts:265-294, baseDomain from getGlmBaseDomain() is used directly in fetchWithTimeout() URLs with the auth headers. No domain validation occurs between getGlmBaseDomain() and the fetch calls.",
+      "recommendation": "In fetchGlmApi() or getGlmBaseDomain(), validate that the resulting host matches the known GLM domain allowlist before making requests. Alternatively, move the domain check from detectPlatform() into a shared validation function used before any HTTP calls."
+    },
+    {
+      "id": "SEC-002",
+      "severity": "low",
+      "confidence": 0.82,
+      "title": "Temp cache file briefly exists with default umask before chmod",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line": 133,
+      "description": "writeCache() creates a temp file with mode 0o600 via writeFileSync({mode: 0o600}), then renames it. The mode option in writeFileSync sets permissions at creation time, so this is actually handled correctly on most systems. However, if the platform does not honor the mode option (some edge cases with NFS or unusual filesystems), the file could briefly be readable before the chmodSync on line 138. This is a very narrow race condition.",
+      "evidence": "Line 132-134: tmpPath is written with mode 0o600, then renamed. Line 137-140: chmodSync as a belt-and-suspenders measure. The initial writeFileSync mode option provides the primary protection.",
+      "recommendation": "The current implementation is adequate. No action required unless deploying to NFS or unusual filesystems."
+    },
+    {
+      "id": "SEC-003",
+      "severity": "low",
+      "confidence": 0.65,
+      "title": "Authorization header passes raw env var without Bearer prefix validation",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line": 119,
+      "description": "getGlmHeaders() sets 'Authorization' to the raw value of process.env.ANTHROPIC_AUTH_TOKEN without any format validation. The token value is passed as-is into the Authorization header. This is not a vulnerability per se (the API server will reject malformed tokens), but it means the full raw value of the env var is sent over the network. If the env var contained something unexpected (e.g., 'Bearer <token>' or a different format), it would be sent verbatim.",
+      "evidence": "Line 119: `'Authorization': authToken` — no validation or normalization of the token format.",
+      "recommendation": "This is low risk. The GLM API will reject malformed auth. No action strictly required."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RISK-001",
+      "title": "Token sent to non-validated domains when ANTHROPIC_BASE_URL is a GLM-lookalike subdomain",
+      "confidence": 0.55,
+      "description": "detectPlatform() accepts any subdomain of the known GLM domains (e.g., 'evil.api.z.ai'). If an attacker registers a subdomain under a compromised DNS zone, the auth token would be sent there. However, this requires DNS compromise or a man-in-the-middle attack on the domain itself, which is outside the threat model for a local CLI tool."
+    },
+    {
+      "id": "RISK-002",
+      "title": "Cache directory created without explicit permissions",
+      "confidence": 0.50,
+      "description": "ensureCacheDir() uses mkdirSync with {recursive: true} but does not set a mode parameter. The directory inherits the process umask. On most systems this creates directories with 0755, meaning other users on shared systems could list the directory (though not read the 0o600 cache file). This is acceptable for a user-desktop tool but worth noting for multi-user environments."
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "GAP-001",
+      "title": "No test for fetchGlmApi with a non-GLM baseDomain",
+      "description": "Tests mock getGlmBaseDomain to return 'https://api.z.ai' but never test what happens if a non-GLM domain is returned. A test confirming the code only fetches from allowlisted domains would document and enforce the security boundary."
+    },
+    {
+      "id": "GAP-002",
+      "title": "No test for cache file permissions after writeCache",
+      "description": "Tests mock writeCache with a no-op function. An integration test verifying that the actual cache file has 0o600 permissions would catch regressions in file permission handling."
+    }
+  ]
+}

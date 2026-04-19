@@ -1,0 +1,139 @@
+{
+  "reviewer": "maintainability",
+  "findings": [
+    {
+      "id": "M001",
+      "severity": "medium",
+      "confidence": 0.82,
+      "title": "GlmUsageDeps interface is premature abstraction with a single consumer",
+      "description": "The GlmUsageDeps interface at glm-usage.ts:224-233 wraps 8 dependencies (detectPlatform, getGlmBaseDomain, readCache, writeCache, fetchGlmApi, getGlmHeaders, readCalibrationFields, now) behind a DI pattern. There is exactly one consumer (getGlmUsage itself), and in index.ts:20 the type is used only to declare the MainDeps.getGlmUsage signature. The overrides are never exercised outside of hypothetical tests. This follows the existing SpeedTrackerDeps pattern (speed-tracker.ts:14-17), but SpeedTrackerDeps only has 2 fields (homeDir, now) and is plausibly useful. GlmUsageDeps has 8 fields and none of them are overridden in production code. The interface creates a large indirection surface that must be kept in sync with every signature change.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "224-251",
+      "recommendation": "If testability is the goal, consider extracting the orchestration logic into a class where deps can be injected once at construction, rather than passing an 8-slot object into a single function. Or, if the function is only tested through integration tests, remove the DI layer and import directly."
+    },
+    {
+      "id": "M002",
+      "severity": "medium",
+      "confidence": 0.85,
+      "title": "Error classes use name-string discrimination instead of instanceof checks",
+      "description": "GlmAuthError and GlmRetryableError (glm-usage.ts:208-219) are plain Error subclasses distinguished only by their .name property. The catch block at lines 369 and 386 uses `(err as Error)?.name === 'GlmAuthError'` for discrimination. This is fragile: any other Error subclass or external library error with the same name would be incorrectly matched. The classes are defined as non-exported local classes, so instanceof is available and would be both safer and clearer. Additionally, both classes add no properties or behavior beyond Error -- they are marker classes.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "208-219, 369, 386",
+      "recommendation": "Use `err instanceof GlmAuthError` instead of string comparison on .name. This is type-safe, survives minification, and makes the intent clearer."
+    },
+    {
+      "id": "M003",
+      "severity": "medium",
+      "confidence": 0.80,
+      "title": "Calibration logic is tightly coupled to cache format through writeCache shape",
+      "description": "In glm-usage.ts:343-356, the successful API response writes calibration fields (calibratedLimit7d, calibratedAt, calibrationVersion, subscriptionTimeMs) directly into the cache entry via writeCache. In the error handlers (lines 370-405), the same calibration fields are manually preserved when writing error-state cache entries. This means every caller of writeCache must know which calibration fields to thread through, and adding a new calibration field requires updating all 4 writeCache call sites (success, auth-error, retryable-error, no-auth) in glm-usage.ts. The calibration persistence concern is mixed into the cache write concern.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "270-283, 343-356, 370-405",
+      "recommendation": "Extract a helper function like `mergeCalibrationIntoCacheEntry(entry, calibration)` that automatically threads calibration fields into any cache entry. This reduces the surface area for future calibration field additions from 4 sites to 1."
+    },
+    {
+      "id": "M004",
+      "severity": "low",
+      "confidence": 0.65,
+      "title": "formatUsageWindowPart accepts 9 parameters via an options object",
+      "description": "The formatUsageWindowPart function at usage.ts:106-163 accepts a destructured object with 9 properties (label, percent, resetAt, colors, usageBarEnabled, barWidth, forceLabel, windowType, tokenCount). While using an options object is better than positional parameters, the function still handles two distinct display modes (fixed-window with reset times vs. semantic rolling/cycle windows) within a single body. The `forceLabel` parameter exists only because the 5h bar sometimes omits its label but the 7d bar always needs one -- this is a presentation concern leaking into the formatting function.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/render/lines/usage.ts",
+      "lines": "106-163",
+      "recommendation": "The current structure is acceptable given that the options object pattern keeps call sites readable. If the function continues to grow (e.g., adding a third window type), consider splitting into formatFixedWindowPart and formatSemanticWindowPart."
+    },
+    {
+      "id": "M005",
+      "severity": "low",
+      "confidence": 0.55,
+      "title": "Magic numbers are reasonable but lack documentation of their derivation",
+      "description": "CALIBRATION_THRESHOLD_PCT = 1 (glm-usage.ts:9) and MIN_TOKENS_FOR_7D = 1000 (glm-usage.ts:8) are well-motivated domain thresholds: the first avoids division-by-near-zero when 5h usage is negligible, and the second prevents showing a misleading 7d percentage from a trivially small token sample. However, the values appear as bare constants with no inline explanation of why 1% and 1000 tokens are the right thresholds. RECALIBRATION_INTERVAL_MS = 24h (line 10) and DEFAULT_CACHE_TTL_MS = 5min (line 7) similarly lack rationale.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "6-10",
+      "recommendation": "Add brief inline comments explaining the rationale. For example: 'CALIBRATION_THRESHOLD_PCT = 1: require at least 1% 5h usage to avoid unstable extrapolation from near-zero denominators'."
+    },
+    {
+      "id": "M006",
+      "severity": "low",
+      "confidence": 0.92,
+      "title": "formatTokenCount is exported from glm-usage.ts but is a general-purpose utility",
+      "description": "formatTokenCount (glm-usage.ts:57-68) is a pure formatting function with no GLM-specific logic. It is imported and used only in render/lines/usage.ts:7. Exporting a general-purpose formatter from a module named 'glm-usage' creates a misleading dependency: the render layer imports from the GLM feature module for a utility function. If another feature needed token formatting, it would either import from glm-usage (wrong conceptual owner) or duplicate the function.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "57-68",
+      "recommendation": "Move formatTokenCount to a shared utility module (e.g., src/utils/format.ts) or into the render module where it is consumed. The render layer should not depend on the GLM feature module for formatting primitives."
+    },
+    {
+      "id": "M007",
+      "severity": "low",
+      "confidence": 0.70,
+      "title": "Separator consistency is maintained -- no actual issue found",
+      "description": "The review asked whether the separator changed from ' │ ' to ' | '. Investigation shows all separators in the codebase consistently use ' | ' (thin pipe with single spaces): usage.ts:89, project.ts:25, render/index.ts:414, session-line.ts:41. The splitLineBySeparators function in render/index.ts:230 also matches ' | '. No ' │ ' (Unicode box-drawing pipe) separators were found in usage rendering code. The concern is unfounded.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/render/lines/usage.ts",
+      "lines": "89",
+      "recommendation": "No action needed. The separator is consistent across the codebase."
+    },
+    {
+      "id": "M008",
+      "severity": "medium",
+      "confidence": 0.78,
+      "title": "Error-state cache writes repeat calibration field threading in 3 separate catch branches",
+      "description": "In glm-usage.ts, there are 4 call sites to deps.writeCache: success (line 344), no-auth (line 273), auth-error (line 371), and retryable-error (line 392). The three error branches each manually construct the same calibration preservation logic: they read calibration?.calibratedLimit7d, calibration?.calibratedAt, and optionally set calibrationVersion based on whether calibratedLimit7d is non-null. This is repetitive and error-prone -- if a new calibration field is added, all 3 error branches must be updated in lockstep, and forgetting one will silently lose calibration data.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "271-283, 369-405",
+      "recommendation": "Extract a `makeErrorCacheEntry(calibration)` helper that returns the base cache entry with calibration fields pre-populated. Each error branch then only needs to override the ttlMs and isError fields."
+    },
+    {
+      "id": "M009",
+      "severity": "low",
+      "confidence": 0.60,
+      "title": "cachedLimit7d and calibratedLimit7d serve the same conceptual role but are named differently",
+      "description": "In usage-cache.ts:82, the function readCalibrationFields returns an object with field `calibratedLimit7d`. In usage-cache.ts:211-236, cacheToUsageData also passes through `calibratedLimit7d`. In glm-usage.ts:308, the local variable is also named `calibratedLimit7d`. The naming is consistent within the GLM feature, but the concept is essentially 'a 7-day token limit derived from calibration' -- the 'calibrated' prefix is somewhat ambiguous about whether this is an action (the limit has been calibrated) or a source (the limit comes from calibration).",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "lines": "21, 82, 101",
+      "recommendation": "Consider `estimatedLimit7d` or `derivedLimit7d` to clarify that this is not a server-provided value but one computed from observed data. However, the current naming is acceptable if the team has established this convention."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "R001",
+      "severity": "low",
+      "title": "No test coverage for any of the three new modules",
+      "description": "No test files exist for glm-detect.ts, glm-usage.ts, or usage-cache.ts. The DI pattern in GlmUsageDeps appears designed to enable unit testing, but no tests have been written. The calibration logic (inferSubscriptionTime, computeCycleStart, the extrapolation formula) is particularly complex and would benefit from property-based or edge-case testing (e.g., month-end rollover, leap years, subscription on the 31st)."
+    },
+    {
+      "id": "R002",
+      "severity": "low",
+      "title": "inferSubscriptionTime month-end edge case handling is complex and untested",
+      "description": "The inferSubscriptionTime function in usage-cache.ts:166-201 handles the case where a subscription day (e.g., 31st) falls in a month with fewer days. The logic uses Date.UTC rollover detection and manual month adjustment. This is a known source of bugs in date arithmetic. Without tests covering months with 28/29/30 days, this is a latent correctness risk."
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "T001",
+      "title": "No unit tests for inferSubscriptionTime edge cases",
+      "description": "The function at usage-cache.ts:166-201 has at least 4 edge cases that should be tested: (1) subscription on day 31 in a 30-day month, (2) subscription on Feb 29 in a non-leap year, (3) subscription on Jan 1 (year boundary), (4) reset time in the future vs. past. The DI pattern with `now: () => number` would make these straightforward to test.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "lines": "166-201"
+    },
+    {
+      "id": "T002",
+      "title": "No unit tests for the calibration extrapolation formula",
+      "description": "The formula at glm-usage.ts:323 (`calibratedLimit7d = (tokens24h * 100 * 7) / fiveHour`) extrapolates a 7-day limit from a 5h percentage and 24h token count. This formula's accuracy depends on the assumption that usage is evenly distributed across the 5h window, which may not hold. The formula should at minimum have tests verifying: division-by-zero is impossible (guarded by CALIBRATION_THRESHOLD_PCT >= 1), the result is reasonable for known inputs, and recalculation after RECALIBRATION_INTERVAL_MS produces updated values.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "311-325"
+    },
+    {
+      "id": "T003",
+      "title": "No unit tests for detectPlatform hostname matching",
+      "description": "The detectPlatform function at glm-detect.ts:16-36 handles subdomain matching (`.endsWith('.' + domain)`). Edge cases to test: exact match, subdomain match, partial match (e.g., 'notapi.z.ai' should NOT match 'api.z.ai' but currently would if it ended with 'api.z.ai'), invalid URLs, empty strings, URLs with ports.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-detect.ts",
+      "lines": "16-36"
+    },
+    {
+      "id": "T004",
+      "title": "No integration test for the cache-first-then-API fallback flow",
+      "description": "The getGlmUsage function has a multi-branch control flow: cache hit (return early), cache miss + API success, cache miss + auth error, cache miss + retryable error (fall back to stale cache). This flow is the core orchestration logic and has no test coverage. The GlmUsageDeps DI interface was clearly designed to support this testing but was never utilized.",
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "lines": "250-415"
+    }
+  ]
+}

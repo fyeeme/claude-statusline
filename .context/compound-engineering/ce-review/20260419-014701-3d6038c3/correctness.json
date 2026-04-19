@@ -1,0 +1,122 @@
+{
+  "reviewer": "correctness",
+  "findings": [
+    {
+      "id": "C-01",
+      "title": "inferSubscriptionTime: expectedMonth computation is always wrong for the 'previous month' branch",
+      "severity": "high",
+      "confidence": 0.95,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line": 186,
+      "description": "After the candidate is computed, the code checks whether the month rolled over. The `expectedMonth` variable is computed as `candidate > Date.now() ? now.getUTCMonth() : now.getUTCMonth() - 1`. But `candidate` has already been adjusted on line 178-180 to be in the past (if it was in the future, it was moved to the previous month). So `candidate > Date.now()` will almost never be true at line 186. When the month rolls over (e.g., day=31 in February), the code takes the `else` branch: `expectedMonth = now.getUTCMonth() - 1`. However, this is the correct expected month for the previous-month case. The bug is actually more subtle: the check `candidate > Date.now()` at line 186 can NEVER be true for the previous-month path, because we already ensured `candidate <= Date.now()` on line 178. This means `expectedMonth` is always `now.getUTCMonth() - 1`, even when we should be checking against the current month (e.g., day=15 today is the 20th, candidate is the 15th of this month -- no rollover, but expectedMonth is still computed as thisMonth - 1). In practice, when the rollover correction is NOT needed, `expectedMonth` is wrong but it doesn't matter because `candidateDate.getUTCMonth()` will also be wrong in the same way (off by one from actual), so the equality check on line 191 happens to pass. But this is fragile and coincidentally correct -- the logic is semantically wrong.",
+      "impact": "The month-rollover fix itself works correctly by coincidence for non-December months. However, in December when `now.getUTCMonth() - 1` is -1, `adjustedExpectedMonth` becomes 11 (November). If the subscription day rolls over in January (e.g., day=31), `candidateDate.getUTCMonth()` would be 0 (January) and `adjustedExpectedMonth` would be 11 (November) -- the mismatch would be detected and corrected to the last day of November. This is actually the wrong month -- it should be December's last day. The year would also be wrong because `targetYear` would come from the January candidate date.",
+      "recommendation": "Simplify the logic: determine the target month BEFORE constructing the candidate. Track whether the candidate was moved to the previous month. Use that explicit flag instead of re-comparing `candidate > Date.now()`."
+    },
+    {
+      "id": "C-02",
+      "title": "Stale error cache returned as valid usage data on RetryableError",
+      "severity": "high",
+      "confidence": 0.90,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line": 388,
+      "description": "At line 259-262, the `cached` variable is read. If it's an error entry (`cached.isError === true`), execution falls through to the API call. If the API call then throws a `GlmRetryableError`, the code at line 388-389 checks `if (cached)` and returns `cacheToUsageData(cached)`. But `cached` is the ERROR entry -- it has `fiveHour: null, sevenDay: null`. Returning this as valid usage data causes `cacheToUsageData` to produce `{fiveHour: null, sevenDay: null, ...}`. In `index.ts` line 86-88, this non-null UsageData object is assigned to `usageData`. In `render/lines/usage.ts` line 17, `ctx.usageData` is truthy so rendering proceeds. At line 40, `effectiveUsage = Math.max(null ?? 0, null ?? 0) = 0`, which is less than the threshold, so the function returns null. This is benign for display but wastes the API call and caches another error entry. More critically, the `cacheToUsageData` call converts the isError entry without propagating the `isError` flag -- the returned object looks like valid (but empty) usage data.",
+      "impact": "On RetryableError, if the cache contained a stale error entry, the function returns a UsageData object with null percentages instead of null. The caller in index.ts treats this as valid data. While the render path happens to handle it gracefully (returns null due to threshold check), the function's contract says it returns null when data is unavailable. This is a contract violation that could break future callers.",
+      "recommendation": "Check `cached && !cached.isError` before falling back to stale cache: `if (cached && !cached.isError) { return cacheToUsageData(cached); }`. Or alternatively, filter out error entries at line 259 so `cached` is always a valid entry or null."
+    },
+    {
+      "id": "C-03",
+      "title": "Same stale error cache issue on timeout/unexpected error path",
+      "severity": "medium",
+      "confidence": 0.90,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line": 409,
+      "description": "Same pattern as C-02: at line 409, `if (cached)` returns `cacheToUsageData(cached)` without checking `cached.isError`. If `cached` was an error entry (which is why we reached the API call path), this returns a bogus UsageData with null percentages.",
+      "impact": "Same as C-02: returns non-null UsageData when data is actually unavailable. Benign for current rendering but violates the function contract.",
+      "recommendation": "Same as C-02: guard with `!cached.isError`."
+    },
+    {
+      "id": "C-04",
+      "title": "5h% only checked on quotaRes, not on usage24hRes or usage7dRes",
+      "severity": "medium",
+      "confidence": 0.80,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line": 151,
+      "description": "Auth and rate-limit error checks at lines 151-158 only examine `quotaRes.status`. If `quotaRes` returns 200 but `usage24hRes` or `usage7dRes` return 401/403/429/5xx, those errors are silently swallowed by the try/catch at lines 185-201. The function will proceed with `tokens24h=0` and `tokens7d=0`. If `fiveHour` is available, it writes a cache entry with zero 7d tokens and returns it. If `fiveHour` is also null (e.g., quota response has unexpected format), the function returns null. The silent swallowing means the user gets no indication that the usage data is incomplete.",
+      "impact": "If usage endpoints are auth-failing but quota works, the user sees a 5h bar but no 7d data, with no error indication. The 7d calibration may also be skipped due to tokens24h=0, preventing future 7d display until the usage endpoints recover.",
+      "recommendation": "Check HTTP status on all three responses before parsing. At minimum, log a warning when usage responses have non-OK status codes."
+    },
+    {
+      "id": "C-05",
+      "title": "inferSubscriptionTime uses local time for 'now' but UTC for candidate construction",
+      "severity": "medium",
+      "confidence": 0.85,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line": 174,
+      "description": "Line 174 creates `const now = new Date()` (local time), but line 177 uses `now.getUTCFullYear()` and `now.getUTCMonth()` to construct the candidate in UTC. Line 178 compares `candidate` (UTC milliseconds) with `Date.now()` (UTC milliseconds) -- this comparison is correct. However, the intent of `new Date()` on line 174 is just to extract the current year and month in UTC, which is fine. The real issue is that `Date.now()` on line 178 returns the actual current time, while the candidate is constructed with the current UTC year/month but using the reset time's day/hours/minutes/seconds. If the reset time is in a timezone-sensitive context, the day extracted from `resetDate.getUTCDate()` may not correspond to the user's subscription anniversary. For example, if `timeLimitResetTime` is a Unix timestamp that the API returns in a different timezone interpretation, the day-of-month extraction could be off by one around midnight.",
+      "impact": "If the API's `nextResetTime` timezone interpretation differs from UTC, the inferred subscription day could be off by one, causing the 7d cycle to be shifted. This would make the 7d percentage slightly inaccurate.",
+      "recommendation": "Document the assumption that `nextResetTime` is in UTC. If the API uses a different timezone, convert before extracting day/hours."
+    },
+    {
+      "id": "C-06",
+      "title": "calibratedLimit7d can be Infinity when fiveHour is very small",
+      "severity": "low",
+      "confidence": 0.82,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/glm-usage.ts",
+      "line": 323,
+      "description": "The calibration formula is `(tokens24h * 100 * 7) / fiveHour`. The guard on line 312 requires `fiveHour >= CALIBRATION_THRESHOLD_PCT` (which is 1), so fiveHour is at least 1. However, `fiveHour` is clamped and rounded on line 169: `clamp(Math.round(percentage), 0, 100)`. If the API returns a percentage of 0.4, `Math.round(0.4) = 0`, which fails the `>= 1` check. If it returns 0.5, `Math.round(0.5) = 1` (or 0 depending on rounding mode), and `tokens24h` could be large, making the calibrated limit very large. With fiveHour=1 and tokens24h=100000, calibratedLimit7d = 70,000,000. This is a valid (if imprecise) estimate -- not Infinity, but extremely large. The check on line 331 (`calibratedLimit7d > 0`) passes, and `raw7d` would be very small, clamped to 0. Not a crash, but the calibration would be meaningless.",
+      "impact": "Very low fiveHour percentages (1-2%) produce extremely inflated 7d limits, making the 7d bar show 0% even with significant token usage. The calibration is inaccurate at low utilization but not incorrect in the crash/NaN sense.",
+      "recommendation": "Consider setting a minimum fiveHour threshold higher than 1 (e.g., 5%) for calibration, or capping the calibrated limit to a reasonable range."
+    },
+    {
+      "id": "C-07",
+      "title": "Race condition: readCache then writeCache without file locking",
+      "severity": "low",
+      "confidence": 0.65,
+      "file": "/Users/Young/Projects/professional/linzikg/claude-hud/src/usage-cache.ts",
+      "line": 121,
+      "description": "The writeCache function uses atomic rename (write to .tmp then rename), which prevents partial writes. However, multiple concurrent invocations of getGlmUsage (which is called every ~300ms by Claude Code) could race: two calls both see a cache miss, both make API calls, and both write to the cache. The second write would overwrite the first. Since both writes are valid data, this is benign -- the worst case is a slightly stale cache entry. The real concern is if one call is writing calibration data while another is writing an error entry: the error entry at line 371-383 preserves calibration fields from the pre-read `calibration` variable, but if a concurrent successful call already wrote updated calibration data, the error writer would overwrite it with stale calibration values.",
+      "impact": "In the 300ms polling interval, the cache miss path takes ~5s (API timeout), so overlapping calls are possible if a previous call is still in-flight. The error writer could overwrite fresher calibration data with stale values. However, since calibration is recalibrated every 24h, the staleness window is limited.",
+      "recommendation": "For a statusline polling at 300ms, the impact is minimal. If this becomes an issue, consider using a mutex or in-process flag to serialize API calls."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "R-01",
+      "title": "7d calibration assumes linear token usage across 5h windows",
+      "description": "The formula `(tokens24h * 100 * 7) / fiveHour` extrapolates the 24h token rate to a 7-day limit. This assumes the 5h percentage represents a linear proportion of the 5h token limit, and that the daily rate is consistent. If usage is bursty (e.g., heavy use in one 5h window, idle in others), the calibration will be inaccurate. This is an inherent limitation of the estimation approach, not a bug.",
+      "severity": "low"
+    },
+    {
+      "id": "R-02",
+      "title": "GLM API response format is not versioned or validated",
+      "description": "The code handles two response formats (object and array) for model-usage, but any future API change that introduces a third format would silently return 0 tokens. The defensive try/catch blocks prevent crashes but mask data loss.",
+      "severity": "low"
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "T-01",
+      "title": "No test for inferSubscriptionTime with December -> January rollover",
+      "description": "The month-end rollover logic in inferSubscriptionTime (usage-cache.ts:183-198) is complex and has a confirmed bug (C-01) for the December->January boundary. There should be explicit test cases for: subscription day=31 when current month is February (28/29 days), subscription day=31 in April (30 days), and subscription day=31 in December crossing into January.",
+      "priority": "high"
+    },
+    {
+      "id": "T-02",
+      "title": "No test for error cache fallback path",
+      "description": "The RetryableError fallback to stale cache (glm-usage.ts:386-389) should be tested with a stale error entry in the cache to verify it doesn't return null percentages as valid data (finding C-02).",
+      "priority": "high"
+    },
+    {
+      "id": "T-03",
+      "title": "No test for calibration with very low fiveHour percentage",
+      "description": "Test with fiveHour=1 and high tokens24h to verify the calibrated limit doesn't cause unexpected behavior in the 7d display path.",
+      "priority": "medium"
+    },
+    {
+      "id": "T-04",
+      "title": "No test for concurrent cache writes",
+      "description": "Test that overlapping getGlmUsage calls don't corrupt calibration data. While the impact is low (R-01), it would be good to verify the current behavior is acceptable.",
+      "priority": "low"
+    }
+  ]
+}

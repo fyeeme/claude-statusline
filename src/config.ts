@@ -98,10 +98,18 @@ export interface HudConfig {
     autocompactBuffer: AutocompactBufferMode;
     usageThreshold: number;
     sevenDayThreshold: number;
+    /** Show 5h and 7d reset times (deadlines) in the usage bar */
+    showUsageResetTime: boolean;
     environmentThreshold: number;
     modelFormat: ModelFormatMode;
     modelOverride: string;
     customLine: string;
+  };
+  usage: {
+    /** Cache TTL for 5h usage data in seconds (default: 300 = 5 min) */
+    fiveHourRefreshSec: number;
+    /** Cache TTL for 7d usage data in seconds (default: 300 = 5 min) */
+    sevenDayRefreshSec: number;
   };
   colors: HudColorOverrides;
 }
@@ -144,10 +152,15 @@ export const DEFAULT_CONFIG: HudConfig = {
     autocompactBuffer: 'enabled',
     usageThreshold: 0,
     sevenDayThreshold: 80,
+    showUsageResetTime: false,
     environmentThreshold: 0,
     modelFormat: 'full',
     modelOverride: '',
     customLine: '',
+  },
+  usage: {
+    fiveHourRefreshSec: 300,
+    sevenDayRefreshSec: 300,
   },
   colors: {
     context: 'green',
@@ -385,6 +398,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
       : DEFAULT_CONFIG.display.autocompactBuffer,
     usageThreshold: validateThreshold(migrated.display?.usageThreshold, 100),
     sevenDayThreshold: validateThreshold(migrated.display?.sevenDayThreshold, 100),
+    showUsageResetTime: typeof migrated.display?.showUsageResetTime === 'boolean'
+      ? migrated.display.showUsageResetTime
+      : DEFAULT_CONFIG.display.showUsageResetTime,
     environmentThreshold: validateThreshold(migrated.display?.environmentThreshold, 100),
     modelFormat: validateModelFormat(migrated.display?.modelFormat)
       ? migrated.display.modelFormat
@@ -433,7 +449,18 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
       : DEFAULT_CONFIG.colors.custom,
   };
 
-  return { language, lineLayout, showSeparators, pathLevels, terminalWidth, elementOrder, gitStatus, display, colors };
+  const usage = {
+    fiveHourRefreshSec: typeof migrated.usage?.fiveHourRefreshSec === 'number'
+      && Number.isFinite(migrated.usage.fiveHourRefreshSec) && migrated.usage.fiveHourRefreshSec > 0
+      ? Math.floor(migrated.usage.fiveHourRefreshSec)
+      : DEFAULT_CONFIG.usage.fiveHourRefreshSec,
+    sevenDayRefreshSec: typeof migrated.usage?.sevenDayRefreshSec === 'number'
+      && Number.isFinite(migrated.usage.sevenDayRefreshSec) && migrated.usage.sevenDayRefreshSec > 0
+      ? Math.floor(migrated.usage.sevenDayRefreshSec)
+      : DEFAULT_CONFIG.usage.sevenDayRefreshSec,
+  };
+
+  return { language, lineLayout, showSeparators, pathLevels, terminalWidth, elementOrder, gitStatus, display, usage, colors };
 }
 
 export async function loadConfig(): Promise<HudConfig> {
