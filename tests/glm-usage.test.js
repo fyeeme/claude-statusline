@@ -517,7 +517,7 @@ describe('getGlmUsage', () => {
       now: () => NOW,
       readCache: () => ({
         platform: 'glm',
-        fiveHour: 20,
+        fiveHour: 32,
         sevenDay: 15,
         sevenDayTokens: 200_000_000,
         fiveHourWindowType: 'cycle',

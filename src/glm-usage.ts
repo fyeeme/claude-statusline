@@ -329,6 +329,9 @@ const defaultDeps: GlmUsageDeps = {
 export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<UsageData | null> {
   const deps = { ...defaultDeps, ...overrides };
 
+  // Milestone crossing key from lightweight refresh (shared with full refresh path)
+  let crossedMilestoneKey: string | undefined;
+
   const platform = deps.detectPlatform();
   if (platform !== 'glm') {
     return null;
@@ -365,11 +368,22 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       const quotaResult = await deps.fetchGlmQuotaOnly(baseDomain, headers, deps.appendLog);
       const newFiveHour = quotaResult.fiveHourPct;
 
-      // Milestone detected → upgrade to full refresh (sample at pct+1: 11%, 21%... or 100%)
+      // Milestone detection: exact hit (pct % 10 === 1) OR crossing a 10% boundary
+      // since last cached value. Crossing detection catches jumps like 9% → 16%.
+      if (newFiveHour != null && cached.fiveHour != null && newFiveHour > cached.fiveHour) {
+        for (let m = 10; m <= newFiveHour; m += 10) {
+          if (cached.fiveHour < m && newFiveHour >= m && !cached.milestoneSamples?.[String(m)]) {
+            crossedMilestoneKey = String(m);
+            break;
+          }
+        }
+      }
       const isMilestone = (newFiveHour != null && newFiveHour > 1 && newFiveHour % 10 === 1)
-        || newFiveHour === 100;
+        || newFiveHour === 100
+        || crossedMilestoneKey != null;
       if (isMilestone) {
-        deps.appendLog(`cache=5h-MILESTONE 5h=${newFiveHour}% → full refresh`);
+        const reason = crossedMilestoneKey ? `crossed ${crossedMilestoneKey}%` : `exact ${newFiveHour}%`;
+        deps.appendLog(`cache=5h-MILESTONE 5h=${newFiveHour}% (${reason}) → full refresh`);
         // Fall through to full refresh below
       } else {
         // Lightweight update: only 5h fields, preserve 7d TTL
@@ -489,9 +503,12 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     // Collect sample at milestone+1 (11%, 21%, 31%...) and attribute to milestone (10%, 20%, 30%).
     // At pct+1, tokens5h has fully settled to reflect ~pct worth of tokens,
     // avoiding the "just crossed threshold" low-bias from sampling at exact milestone.
+    // Also handles crossing detection: if lightweight refresh detected a boundary crossing
+    // (e.g., 9% → 16%), use that milestone key even if current pct is past the boundary.
     // 100% triggers calibration directly: tokens5h × 5 (tokens5h ≈ full 5h budget).
     const isMilestone = (fiveHour != null && fiveHour > 1 && fiveHour % 10 === 1)
-      || fiveHour === 100;
+      || fiveHour === 100
+      || crossedMilestoneKey != null;
     if (fiveHour === 100 && canCalibrate) {
       // 100%: direct calculation, no milestone sampling
       const hundredPctLimit = results.tokens5h * 5;
@@ -506,10 +523,16 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
         calibratedAtPct = 100;
       }
     } else if (isMilestone && canCalibrate) {
-      const milestoneKey = String(fiveHour! - 1);
+      // Use crossed milestone key from lightweight refresh if available,
+      // otherwise derive from exact hit (pct-1: 11%→"10", 21%→"20")
+      const milestoneKey = crossedMilestoneKey ?? String(fiveHour! - 1);
       if (!milestoneSamples) milestoneSamples = {};
       if (!milestoneSamples[milestoneKey]) milestoneSamples[milestoneKey] = [];
-      milestoneSamples[milestoneKey].push(results.tokens5h);
+      // Skip duplicate token value to avoid inflating the average
+      const lastVal = milestoneSamples[milestoneKey][milestoneSamples[milestoneKey].length - 1];
+      if (lastVal !== results.tokens5h) {
+        milestoneSamples[milestoneKey].push(results.tokens5h);
+      }
       if (milestoneSamples[milestoneKey].length > MAX_SAMPLES_PER_MILESTONE) {
         milestoneSamples[milestoneKey] = milestoneSamples[milestoneKey].slice(-MAX_SAMPLES_PER_MILESTONE);
       }
