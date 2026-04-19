@@ -9,6 +9,8 @@ export interface CachedUsageData {
   fiveHour: number | null;
   sevenDay: number | null;
   sevenDayTokens?: number;
+  /** 5h window consumed tokens (from model-usage API) */
+  fiveHourTokens?: number;
   fiveHourWindowType: UsageWindowType;
   sevenDayWindowType: UsageWindowType;
   /** Timestamp when this entry was cached (ms since epoch) */

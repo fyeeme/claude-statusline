@@ -364,6 +364,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       fiveHour,
       sevenDay,
       sevenDayTokens,
+      fiveHourTokens: results.tokens5h || undefined,
       fiveHourWindowType: 'cycle',
       sevenDayWindowType: 'cycle',
       ttlMs: deps.cacheTtlMs,
@@ -387,6 +388,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       sevenDayWindowType: sevenDay !== null ? 'cycle' : undefined,
       platform: 'glm',
       sevenDayTokens,
+      fiveHourTokens: results.tokens5h || undefined,
     };
   } catch (err) {
     if ((err as Error)?.name === 'GlmAuthError') {

@@ -84,6 +84,7 @@ export interface UsageData {
   platform?: UsagePlatform;
   /** 7-day total token count (GLM only, for display context) */
   sevenDayTokens?: number;
+  fiveHourTokens?: number;
 }
 
 export interface MemoryInfo {
