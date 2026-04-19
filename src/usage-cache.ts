@@ -19,10 +19,14 @@ export interface CachedUsageData {
   ttlMs: number;
   /** If true, this entry represents a failure state (e.g. auth error) */
   isError?: boolean;
+  /** Timestamp when 5h data was last refreshed (independent of 7d TTL) */
+  fiveHourFetchedAt?: number;
   /** Calibrated 7-day token limit (survives cache TTL via readCalibrationFields) */
   calibratedLimit7d?: number;
   /** Timestamp of last successful calibration (ms since epoch) */
   calibratedAt?: number;
+  /** fiveHour percentage at time of last calibration (recalibrate when |Δ| ≥ 10) */
+  calibratedAtPct?: number;
   /** Inferred subscription time in ms since epoch (survives cache TTL via readCalibrationFields) */
   subscriptionTimeMs?: number;
   /** 5h window start timestamp (ms since epoch) = fiveHourResetAt - 5h */
@@ -36,6 +40,8 @@ export interface CachedUsageData {
 }
 
 const CACHE_FILENAME = '.usage-cache.json';
+const LOG_FILENAME = 'usage.log';
+const LOG_MAX_BYTES = 512 * 1024; // 512KB
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const ERROR_TTL_BASE_MS = 60 * 1000; // 60 seconds for error states
 const RATE_LIMIT_BACKOFF_BASE_MS = 60 * 1000;
@@ -84,9 +90,9 @@ export function readCache(currentPlatform: UsagePlatform): CachedUsageData | nul
   }
 }
 
-/** Read calibration fields from cache, ignoring TTL.
- *  Returns calibratedLimit7d, calibratedAt, and subscriptionTimeMs — these persist across cache TTL cycles. */
-export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7d' | 'calibratedAt' | 'subscriptionTimeMs'> | null {
+/** Read calibration and monotonic fields from cache, ignoring TTL.
+ *  These fields persist across cache TTL cycles for stable calculations. */
+export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7d' | 'calibratedAt' | 'calibratedAtPct' | 'subscriptionTimeMs' | 'sevenDay' | 'sevenDayTokens' | 'sevenDayStartAt'> | null {
   const cachePath = getCachePath();
   try {
     if (!fs.existsSync(cachePath)) {
@@ -100,14 +106,22 @@ export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7
       return {
         calibratedLimit7d: entry.calibratedLimit7d,
         calibratedAt: entry.calibratedAt,
+        calibratedAtPct: entry.calibratedAtPct,
         subscriptionTimeMs: entry.subscriptionTimeMs,
+        sevenDay: entry.sevenDay,
+        sevenDayTokens: entry.sevenDayTokens,
+        sevenDayStartAt: entry.sevenDayStartAt,
       };
     }
 
-    // Also return subscription-only data (no calibration yet)
+    // Also return subscription-only + monotonic data (no calibration yet)
     if (entry.subscriptionTimeMs != null) {
       return {
         subscriptionTimeMs: entry.subscriptionTimeMs,
+        calibratedAtPct: entry.calibratedAtPct,
+        sevenDay: entry.sevenDay,
+        sevenDayTokens: entry.sevenDayTokens,
+        sevenDayStartAt: entry.sevenDayStartAt,
       };
     }
 
@@ -117,15 +131,16 @@ export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7
   }
 }
 
-/** Write usage data to cache. Creates the cache directory if needed. */
-export function writeCache(data: Omit<CachedUsageData, 'timestamp'>): void {
+/** Write usage data to cache. Creates the cache directory if needed.
+ *  @param preserveTimestamp If set, preserves the original timestamp (used by lightweight 5h refreshes to avoid resetting 7d TTL). */
+export function writeCache(data: Omit<CachedUsageData, 'timestamp'>, preserveTimestamp?: number): void {
   const cachePath = getCachePath();
   try {
     ensureCacheDir();
 
     const entry: CachedUsageData = {
       ...data,
-      timestamp: Date.now(),
+      timestamp: preserveTimestamp ?? Date.now(),
     };
 
     // Atomic write: write to temp file, then rename
@@ -144,7 +159,26 @@ export function writeCache(data: Omit<CachedUsageData, 'timestamp'>): void {
   }
 }
 
-/** Get TTL for error states (with jitter: 45-75 seconds) */
+/** Append a one-line usage refresh log entry. Rotates at LOG_MAX_BYTES. */
+export function appendUsageLog(line: string): void {
+  const logPath = path.join(getHudPluginDir(os.homedir()), LOG_FILENAME);
+  try {
+    // Rotate if oversized
+    if (fs.existsSync(logPath)) {
+      const stat = fs.statSync(logPath);
+      if (stat.size > LOG_MAX_BYTES) {
+        const raw = fs.readFileSync(logPath, 'utf-8');
+        const lines = raw.split('\n').filter(Boolean);
+        const keep = lines.slice(-200);
+        fs.writeFileSync(logPath, keep.join('\n') + '\n', { mode: 0o600 });
+      }
+    }
+    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    fs.appendFileSync(logPath, `[${ts}] ${line}\n`, { mode: 0o600 });
+  } catch {
+    // Log failure is non-blocking
+  }
+}
 export function getErrorTtlMs(): number {
   const jitter = Math.floor(Math.random() * 30_000); // 0-30s jitter
   return ERROR_TTL_BASE_MS - 15_000 + jitter; // 45-75s

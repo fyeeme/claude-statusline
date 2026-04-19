@@ -50,6 +50,7 @@ function createMockDeps(overrides = {}) {
     getGlmBaseDomain: () => 'https://api.z.ai',
     readCache: () => null,
     writeCache: () => {},
+    appendLog: () => {},
     getGlmHeaders: () => ({
       'Authorization': 'test-token',
       'Content-Type': 'application/json',
@@ -61,9 +62,15 @@ function createMockDeps(overrides = {}) {
       tokens7d: 310_000_000,
       timeLimitResetTime: new Date('2026-04-30T07:43:12.000Z').getTime(),
     }),
+    fetchGlmQuotaOnly: async () => ({
+      fiveHourPct: 15,
+      tokensLimitResetTime: null,
+      timeLimitResetTime: null,
+    }),
     readCalibrationFields: () => ({ subscriptionTimeMs: FIXED_SUB_TIME }),
     now: () => Date.now(),
     cacheTtlMs: 5 * 60 * 1000,
+    fiveHourTtlMs: 30 * 1000,
     ...overrides,
   };
 }
@@ -362,13 +369,17 @@ describe('getGlmUsage', () => {
       }),
       readCalibrationFields: () => ({
         calibratedLimit7d: calibratedLimit,
-        calibratedAt: FIXED_NOW, // Recent — no recalibration needed
+        calibratedAt: FIXED_NOW,
+        calibratedAtPct: 50,
         subscriptionTimeMs: FIXED_SUB_TIME,
+        sevenDay: 20,
+        sevenDayTokens: 200_000_000,
+        sevenDayStartAt: writtenFirst.sevenDayStartAt,
       }),
       now: () => FIXED_NOW + 60_000, // 1 minute later
     }));
 
-    // 7d% should be the SAME — calibrated limit is still 1000M
+    // 7d% should be the SAME — monotonic enforcement prevents decrease within same cycle
     assert.equal(result2.sevenDay, 20);
   });
 
@@ -465,5 +476,170 @@ describe('getGlmUsage', () => {
     assert.equal(writtenData.isError, true);
     // Calibration data should survive the error
     assert.equal(writtenData.calibratedLimit7d, 500_000_000);
+  });
+
+  // ---- Two-stage refresh tests ----
+
+  it('returns cached data when both 5h and 7d are fresh', async () => {
+    const NOW = 1700000000000;
+    let fetchCalled = false;
+    const result = await getGlmUsage(createMockDeps({
+      now: () => NOW,
+      readCache: () => ({
+        platform: 'glm',
+        fiveHour: 20,
+        sevenDay: 10,
+        sevenDayTokens: 100_000_000,
+        fiveHourWindowType: 'cycle',
+        sevenDayWindowType: 'cycle',
+        timestamp: NOW - 10_000, // 10s ago
+        ttlMs: 5 * 60 * 1000,
+        fiveHourFetchedAt: NOW - 10_000, // 10s ago, within 30s TTL
+      }),
+      fetchGlmApi: async () => { fetchCalled = true; return { fiveHourPct: 0, tokens5h: 0, tokens7d: 0 }; },
+      fetchGlmQuotaOnly: async () => { fetchCalled = true; return { fiveHourPct: 0 }; },
+    }));
+
+    assert.equal(fetchCalled, false);
+    assert.equal(result.fiveHour, 20);
+    assert.equal(result.sevenDay, 10);
+  });
+
+  it('does lightweight refresh when 5h stale but 7d fresh (non-milestone)', async () => {
+    const NOW = 1700000000000;
+    const CACHE_TIME = NOW - 60_000; // 1 min ago → 5h TTL expired (30s), but 7d TTL fresh (5min)
+
+    let quotaCalled = false;
+    let apiCalled = false;
+    let writtenData = null;
+
+    const result = await getGlmUsage(createMockDeps({
+      now: () => NOW,
+      readCache: () => ({
+        platform: 'glm',
+        fiveHour: 20,
+        sevenDay: 15,
+        sevenDayTokens: 200_000_000,
+        fiveHourWindowType: 'cycle',
+        sevenDayWindowType: 'cycle',
+        timestamp: CACHE_TIME,
+        ttlMs: 5 * 60 * 1000,
+        fiveHourFetchedAt: CACHE_TIME,
+      }),
+      fetchGlmApi: async () => { apiCalled = true; return { fiveHourPct: 0, tokens5h: 0, tokens7d: 0 }; },
+      fetchGlmQuotaOnly: async () => {
+        quotaCalled = true;
+        return { fiveHourPct: 33, tokensLimitResetTime: NOW + 3600000, timeLimitResetTime: null };
+      },
+      writeCache: (data, preserveTs) => { writtenData = { data, preserveTs }; },
+    }));
+
+    assert.equal(quotaCalled, true);
+    assert.equal(apiCalled, false, 'Should NOT call full API on non-milestone lightweight refresh');
+    assert.equal(result.fiveHour, 33);
+    assert.equal(result.sevenDay, 15, '7d should be preserved from cache');
+    assert.equal(result.sevenDayTokens, 200_000_000);
+    assert.equal(writtenData.preserveTs, CACHE_TIME, 'Should preserve 7d TTL timestamp');
+    assert.equal(writtenData.data.fiveHourFetchedAt, NOW);
+  });
+
+  it('upgrades to full refresh when 5h milestone detected', async () => {
+    const NOW = 1700000000000;
+    const CACHE_TIME = NOW - 60_000;
+
+    let apiCalled = false;
+    const result = await getGlmUsage(createMockDeps({
+      now: () => NOW,
+      readCache: () => ({
+        platform: 'glm',
+        fiveHour: 27,
+        sevenDay: 15,
+        sevenDayTokens: 200_000_000,
+        fiveHourWindowType: 'cycle',
+        sevenDayWindowType: 'cycle',
+        timestamp: CACHE_TIME,
+        ttlMs: 5 * 60 * 1000,
+        fiveHourFetchedAt: CACHE_TIME,
+      }),
+      fetchGlmQuotaOnly: async () => ({
+        fiveHourPct: 30, // Milestone! 30 % 10 === 0
+        tokensLimitResetTime: null,
+        timeLimitResetTime: null,
+      }),
+      fetchGlmApi: async () => {
+        apiCalled = true;
+        return {
+          fiveHourPct: 30,
+          tokens5h: 100_000_000,
+          tokens7d: 300_000_000,
+          timeLimitResetTime: new Date('2026-04-30T07:43:12.000Z').getTime(),
+        };
+      },
+      readCalibrationFields: () => ({ subscriptionTimeMs: FIXED_SUB_TIME }),
+    }));
+
+    assert.equal(apiCalled, true, 'Should call full API on milestone detection');
+    assert.equal(result.fiveHour, 30);
+    assert.notEqual(result.sevenDay, 15, '7d should be recalculated, not preserved');
+  });
+
+  it('returns stale cache on lightweight refresh failure', async () => {
+    const NOW = 1700000000000;
+    const CACHE_TIME = NOW - 60_000;
+
+    const result = await getGlmUsage(createMockDeps({
+      now: () => NOW,
+      readCache: () => ({
+        platform: 'glm',
+        fiveHour: 20,
+        sevenDay: 10,
+        sevenDayTokens: 100_000_000,
+        fiveHourWindowType: 'cycle',
+        sevenDayWindowType: 'cycle',
+        timestamp: CACHE_TIME,
+        ttlMs: 5 * 60 * 1000,
+        fiveHourFetchedAt: CACHE_TIME,
+      }),
+      fetchGlmQuotaOnly: async () => { throw new Error('Network error'); },
+    }));
+
+    assert.equal(result.fiveHour, 20, 'Should return stale 5h on lightweight failure');
+    assert.equal(result.sevenDay, 10, 'Should preserve 7d from cache');
+  });
+
+  it('preserves all calibration fields during lightweight refresh', async () => {
+    const NOW = 1700000000000;
+    const CACHE_TIME = NOW - 60_000;
+
+    let writtenData = null;
+    await getGlmUsage(createMockDeps({
+      now: () => NOW,
+      readCache: () => ({
+        platform: 'glm',
+        fiveHour: 20,
+        sevenDay: 15,
+        sevenDayTokens: 200_000_000,
+        fiveHourWindowType: 'cycle',
+        sevenDayWindowType: 'cycle',
+        timestamp: CACHE_TIME,
+        ttlMs: 5 * 60 * 1000,
+        fiveHourFetchedAt: CACHE_TIME,
+        calibratedLimit7d: 1000_000_000,
+        calibratedAt: CACHE_TIME - 100_000,
+        calibratedAtPct: 20,
+        subscriptionTimeMs: FIXED_SUB_TIME,
+        sevenDayStartAt: 1700000000000 - 3 * 24 * 3600 * 1000,
+        sevenDayResetAt: 1700000000000 + 4 * 24 * 3600 * 1000,
+      }),
+      fetchGlmQuotaOnly: async () => ({ fiveHourPct: 25, tokensLimitResetTime: null, timeLimitResetTime: null }),
+      writeCache: (data, preserveTs) => { writtenData = { data, preserveTs }; },
+    }));
+
+    assert.equal(writtenData.data.calibratedLimit7d, 1000_000_000);
+    assert.equal(writtenData.data.calibratedAtPct, 20);
+    assert.equal(writtenData.data.subscriptionTimeMs, FIXED_SUB_TIME);
+    assert.equal(writtenData.data.sevenDay, 15);
+    assert.equal(writtenData.data.sevenDayTokens, 200_000_000);
+    assert.equal(writtenData.preserveTs, CACHE_TIME);
   });
 });

@@ -2,8 +2,8 @@ import type { Messages } from "./types.js";
 
 export const en: Messages = {
   // Labels
-  "label.context": "Context",
-  "label.usage": "Usage",
+  "label.context": "Ctx",
+  "label.usage": "Use",
   "label.weekly": "Weekly",
   "label.approxRam": "Approx RAM",
   "label.rules": "rules",

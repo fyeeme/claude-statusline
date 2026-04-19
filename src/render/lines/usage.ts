@@ -50,6 +50,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
   const barWidth = Math.max(4, Math.ceil(baseBarWidth * 0.8));
 
   if (fiveHour === null && sevenDay !== null) {
+    const isGlmCycle = isGlm && ctx.usageData.sevenDayWindowType === 'cycle';
     const weeklyOnlyPart = formatUsageWindowPart({
       label: isGlm ? "7d" : t("label.weekly"),
       percent: sevenDay,
@@ -57,7 +58,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
       colors,
       usageBarEnabled,
       barWidth,
-      forceLabel: true,
+      forceLabel: !isGlmCycle,
       windowType: ctx.usageData.sevenDayWindowType,
       tokenCount: ctx.usageData.sevenDayTokens,
       showResetTime: display?.showUsageResetTime,
@@ -77,6 +78,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
   });
 
   if (sevenDay !== null && sevenDay >= sevenDayThreshold) {
+    const isGlmCycle = isGlm && ctx.usageData.sevenDayWindowType === 'cycle';
     const sevenDayPart = formatUsageWindowPart({
       label: isGlm ? "7d" : t("label.weekly"),
       percent: sevenDay,
@@ -84,7 +86,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
       colors,
       usageBarEnabled,
       barWidth,
-      forceLabel: true,
+      forceLabel: !isGlmCycle,
       windowType: ctx.usageData.sevenDayWindowType,
       tokenCount: ctx.usageData.sevenDayTokens,
       showResetTime: display?.showUsageResetTime,

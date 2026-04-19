@@ -159,8 +159,8 @@ export const DEFAULT_CONFIG: HudConfig = {
     customLine: '',
   },
   usage: {
-    fiveHourRefreshSec: 300,
-    sevenDayRefreshSec: 300,
+    fiveHourRefreshSec: 30,
+    sevenDayRefreshSec: 180,
   },
   colors: {
     context: 'green',
