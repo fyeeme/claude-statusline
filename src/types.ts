@@ -72,7 +72,9 @@ export type UsagePlatform = 'anthropic' | 'glm';
 export interface UsageData {
   fiveHour: number | null;  // 0-100 percentage, null if unavailable
   sevenDay: number | null;  // 0-100 percentage, null if unavailable
+  fiveHourStartAt: Date | null;
   fiveHourResetAt: Date | null;
+  sevenDayStartAt: Date | null;
   sevenDayResetAt: Date | null;
   /** Semantic window type for the 5h slot. Default: 'fixed' (Anthropic resets at a known time) */
   fiveHourWindowType?: UsageWindowType;

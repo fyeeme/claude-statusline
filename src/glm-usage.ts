@@ -332,8 +332,8 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     if (needsCalibration && canCalibrate) {
       // Precise calibration: 5h window has exact token usage + percentage
       // 5h_budget = tokens5h × 100 / fiveHour
-      // 7d_budget = 5h_budget × 7  (5h limit = daily limit on GLM platform)
-      calibratedLimit7d = (results.tokens5h * 100 * 7) / fiveHour;
+      // 7d_budget = 5h_budget × 5  (official ratio: 7d limit = 5 × 5h limit)
+      calibratedLimit7d = (results.tokens5h * 100 * 5) / fiveHour;
       calibratedAt = nowMs;
     }
 
@@ -354,6 +354,8 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     }
 
     const fiveHourResetAt = results.tokensLimitResetTime ?? null;
+    const fiveHourStartAt = fiveHourResetAt != null ? fiveHourResetAt - FIVE_HOUR_MS : null;
+    const sevenDayStartAt = effectiveCycleStart ?? null;
     const sevenDayResetAt = effectiveCycleStart != null ? effectiveCycleStart + 7 * 24 * 60 * 60 * 1000 : null;
 
     // Write to cache
@@ -369,13 +371,17 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       calibratedAt,
       subscriptionTimeMs: effectiveSubscriptionTime,
       fiveHourResetAt,
+      fiveHourStartAt,
+      sevenDayStartAt,
       sevenDayResetAt,
     });
 
     return {
       fiveHour,
       sevenDay,
+      fiveHourStartAt: fiveHourStartAt != null ? new Date(fiveHourStartAt) : null,
       fiveHourResetAt: fiveHourResetAt != null ? new Date(fiveHourResetAt) : null,
+      sevenDayStartAt: sevenDayStartAt != null ? new Date(sevenDayStartAt) : null,
       sevenDayResetAt: sevenDayResetAt != null ? new Date(sevenDayResetAt) : null,
       fiveHourWindowType: 'cycle',
       sevenDayWindowType: sevenDay !== null ? 'cycle' : undefined,

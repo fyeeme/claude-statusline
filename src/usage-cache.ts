@@ -23,8 +23,12 @@ export interface CachedUsageData {
   calibratedAt?: number;
   /** Inferred subscription time in ms since epoch (survives cache TTL via readCalibrationFields) */
   subscriptionTimeMs?: number;
+  /** 5h window start timestamp (ms since epoch) = fiveHourResetAt - 5h */
+  fiveHourStartAt?: number | null;
   /** 5h window reset timestamp (ms since epoch) from TOKENS_LIMIT.nextResetTime */
   fiveHourResetAt?: number | null;
+  /** 7d cycle start timestamp (ms since epoch) = effectiveCycleStart */
+  sevenDayStartAt?: number | null;
   /** 7d cycle end timestamp (ms since epoch) = cycleStart + 7d */
   sevenDayResetAt?: number | null;
 }
@@ -200,7 +204,9 @@ export function computeCycleStart(subscriptionTimeMs: number, nowMs: number): nu
 export function cacheToUsageData(cached: CachedUsageData): {
   fiveHour: number | null;
   sevenDay: number | null;
+  fiveHourStartAt: Date | null;
   fiveHourResetAt: Date | null;
+  sevenDayStartAt: Date | null;
   sevenDayResetAt: Date | null;
   fiveHourWindowType: UsageWindowType;
   sevenDayWindowType: UsageWindowType;
@@ -213,7 +219,9 @@ export function cacheToUsageData(cached: CachedUsageData): {
   return {
     fiveHour: cached.fiveHour,
     sevenDay: cached.sevenDay,
+    fiveHourStartAt: cached.fiveHourStartAt != null ? new Date(cached.fiveHourStartAt) : null,
     fiveHourResetAt: cached.fiveHourResetAt != null ? new Date(cached.fiveHourResetAt) : null,
+    sevenDayStartAt: cached.sevenDayStartAt != null ? new Date(cached.sevenDayStartAt) : null,
     sevenDayResetAt: cached.sevenDayResetAt != null ? new Date(cached.sevenDayResetAt) : null,
     fiveHourWindowType: cached.fiveHourWindowType,
     sevenDayWindowType: cached.sevenDayWindowType,

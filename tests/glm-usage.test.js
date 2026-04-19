@@ -129,8 +129,8 @@ describe('getGlmUsage', () => {
     assert.equal(result.fiveHour, 10);
     assert.equal(result.fiveHourWindowType, 'cycle');
     assert.equal(result.platform, 'glm');
-    // Calibrated: limit7d = 22.3M * 100 * 7 / 10 = 1561M; 7d% = 310M / 1561M * 100 = 20
-    assert.equal(result.sevenDay, 20);
+    // Calibrated: limit7d = 22.3M * 100 * 5 / 10 = 1115M; 7d% = 310M / 1115M * 100 = 28
+    assert.equal(result.sevenDay, 28);
     assert.equal(result.sevenDayWindowType, 'cycle');
     assert.equal(result.sevenDayTokens, 310_000_000);
     assert.ok(result.fiveHourResetAt === null || result.fiveHourResetAt instanceof Date);
@@ -283,7 +283,7 @@ describe('getGlmUsage', () => {
   });
 
   it('calculates 7d percentage correctly: calibrated formula', async () => {
-    // Calibrated: limit7d = 22.3M * 100 * 7 / 10 = 1561M; 7d% = 310M / 1561M * 100 = 20
+    // Calibrated: limit7d = 22.3M * 100 * 5 / 10 = 1115M; 7d% = 310M / 1115M * 100 = 28
     const result = await getGlmUsage(createMockDeps({
       fetchGlmApi: async () => ({
         fiveHourPct: 10,
@@ -292,7 +292,7 @@ describe('getGlmUsage', () => {
       }),
     }));
 
-    assert.equal(result.sevenDay, 20);
+    assert.equal(result.sevenDay, 28);
   });
 
   // ---- Calibration-specific tests ----
@@ -324,12 +324,12 @@ describe('getGlmUsage', () => {
       writeCache: (data) => { writtenData = data; },
     }));
 
-    // Calibrated limit = 100M * 100 * 7 / 20 = 3500M
+    // Calibrated limit = 100M * 100 * 5 / 20 = 2500M
     assert.notEqual(writtenData, null);
-    assert.equal(Math.round(writtenData.calibratedLimit7d), 3_500_000_000);
+    assert.equal(Math.round(writtenData.calibratedLimit7d), 2_500_000_000);
     assert.ok(writtenData.calibratedAt != null);
-    // 7d% = 250M / 3500M * 100 = 7.1 → 7
-    assert.equal(writtenData.sevenDay, 7);
+    // 7d% = 250M / 2500M * 100 = 10
+    assert.equal(writtenData.sevenDay, 10);
   });
 
   it('7d% does NOT change when fiveHourPct drops after calibration', async () => {
@@ -348,9 +348,9 @@ describe('getGlmUsage', () => {
       now: () => FIXED_NOW,
     }));
 
-    // Calibrated limit = 100M * 100 * 7 / 50 = 1400M
-    // 7d% = 200M / 1400M * 100 = 14.3 → 14
-    assert.equal(result1.sevenDay, 14);
+    // Calibrated limit = 100M * 100 * 5 / 50 = 1000M
+    // 7d% = 200M / 1000M * 100 = 20
+    assert.equal(result1.sevenDay, 20);
     const calibratedLimit = writtenFirst.calibratedLimit7d;
 
     // Second call: fiveHourPct drops to 10% (5h window rolled over), same tokens
@@ -368,8 +368,8 @@ describe('getGlmUsage', () => {
       now: () => FIXED_NOW + 60_000, // 1 minute later
     }));
 
-    // 7d% should be the SAME — calibrated limit is still 1400M
-    assert.equal(result2.sevenDay, 14);
+    // 7d% should be the SAME — calibrated limit is still 1000M
+    assert.equal(result2.sevenDay, 20);
   });
 
   it('uses cached calibration when fiveHourPct is null', async () => {
@@ -415,8 +415,8 @@ describe('getGlmUsage', () => {
       now: () => NEW_NOW,
     }));
 
-    // Should recalibrate: new limit = 80M * 100 * 7 / 30 = 1866.67M (not rounded)
-    assert.ok(Math.abs(writtenData.calibratedLimit7d - 80_000_000 * 100 * 7 / 30) < 1);
+    // Should recalibrate: new limit = 80M * 100 * 5 / 30 = 1333.33M (not rounded)
+    assert.ok(Math.abs(writtenData.calibratedLimit7d - 80_000_000 * 100 * 5 / 30) < 1);
     assert.equal(writtenData.calibratedAt, NEW_NOW);
   });
 
@@ -440,11 +440,11 @@ describe('getGlmUsage', () => {
       now: () => NEW_NOW,
     }));
 
-    // Should recalibrate with exact 5h data: limit = 80M * 100 * 7 / 5 = 11200M
-    assert.equal(writtenData.calibratedLimit7d, 11_200_000_000);
+    // Should recalibrate with exact 5h data: limit = 80M * 100 * 5 / 5 = 8000M
+    assert.equal(writtenData.calibratedLimit7d, 8_000_000_000);
     assert.equal(writtenData.calibratedAt, NEW_NOW);
-    // 7d% = 300M / 11200M * 100 = 2.7 → 3
-    assert.equal(result.sevenDay, 3);
+    // 7d% = 300M / 8000M * 100 = 3.75 → 4
+    assert.equal(result.sevenDay, 4);
   });
 
   it('carries calibration through error states', async () => {

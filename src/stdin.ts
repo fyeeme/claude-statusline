@@ -257,7 +257,9 @@ export function getUsageFromStdin(stdin: StdinData): UsageData | null {
   return {
     fiveHour,
     sevenDay,
+    fiveHourStartAt: null,
     fiveHourResetAt: parseRateLimitResetAt(rateLimits.five_hour?.resets_at),
+    sevenDayStartAt: null,
     sevenDayResetAt: parseRateLimitResetAt(rateLimits.seven_day?.resets_at),
   };
 }

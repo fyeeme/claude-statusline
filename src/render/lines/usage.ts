@@ -46,7 +46,7 @@ export function renderUsageLine(ctx: RenderContext): string | null {
   // R9b: GLM threshold override — always show 7d bar for GLM
   const sevenDayThreshold = isGlm ? 0 : (display?.sevenDayThreshold ?? 80);
   const baseBarWidth = getAdaptiveBarWidth();
-  // Unified 0.9 scaling for all bars to keep context/usage visually consistent
+  // Unified 0.8 scaling for all bars to keep context/usage visually consistent
   const barWidth = Math.max(4, Math.ceil(baseBarWidth * 0.8));
 
   if (fiveHour === null && sevenDay !== null) {
