@@ -496,6 +496,11 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       milestoneSamples = undefined;
     }
 
+    // Migration: clear old-format samples (raw tokens < 200M, estimates should be ≥ ~500M)
+    if (milestoneSamples && Object.values(milestoneSamples).some(arr => arr.some(v => v < 200_000_000))) {
+      milestoneSamples = undefined;
+    }
+
     const canCalibrate = fiveHour !== null
       && fiveHour > 0
       && results.tokens5h > 0;
@@ -528,10 +533,11 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       const milestoneKey = crossedMilestoneKey ?? String(fiveHour! - 1);
       if (!milestoneSamples) milestoneSamples = {};
       if (!milestoneSamples[milestoneKey]) milestoneSamples[milestoneKey] = [];
-      // Skip duplicate token value to avoid inflating the average
+      // Store estimated 7d budget, not raw tokens — different 5h windows have different budgets
+      const estimated = Math.round(results.tokens5h * 500 / Number(milestoneKey));
       const lastVal = milestoneSamples[milestoneKey][milestoneSamples[milestoneKey].length - 1];
-      if (lastVal !== results.tokens5h) {
-        milestoneSamples[milestoneKey].push(results.tokens5h);
+      if (lastVal !== estimated) {
+        milestoneSamples[milestoneKey].push(estimated);
       }
       if (milestoneSamples[milestoneKey].length > MAX_SAMPLES_PER_MILESTONE) {
         milestoneSamples[milestoneKey] = milestoneSamples[milestoneKey].slice(-MAX_SAMPLES_PER_MILESTONE);
@@ -553,7 +559,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
           const arr = milestoneSamples[pctStr];
           if (arr.length > 0 && pct > 0) {
             const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
-            sum += (avg * 100 * 5) / pct;
+            sum += avg;
             count++;
           }
         }

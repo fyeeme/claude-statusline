@@ -153,12 +153,27 @@ function mergeWithExistingCache(data: Omit<CachedUsageData, 'timestamp'>, cacheP
   // Preserve calibration fields: keep existing if new is undefined
   const preserveFields = [
     'calibratedLimit7d', 'calibratedAt', 'calibratedAtPct',
-    'subscriptionTimeMs', 'milestoneSamples',
+    'subscriptionTimeMs',
   ] as const;
   for (const field of preserveFields) {
     if (merged[field] === undefined && existing[field] !== undefined) {
       merged[field] = existing[field];
     }
+  }
+
+  // milestoneSamples: deep merge per-key arrays + dedup (handles concurrent writes)
+  const newMs = merged.milestoneSamples as Record<string, number[]> | undefined;
+  const oldMs = existing.milestoneSamples as Record<string, number[]> | undefined;
+  if (newMs && oldMs) {
+    const combined: Record<string, number[]> = {};
+    const allKeys = new Set([...Object.keys(newMs), ...Object.keys(oldMs)]);
+    for (const key of allKeys) {
+      const mergedArr = [...(oldMs[key] ?? []), ...(newMs[key] ?? [])];
+      combined[key] = [...new Set(mergedArr)];
+    }
+    merged.milestoneSamples = combined;
+  } else if (oldMs && !newMs) {
+    merged.milestoneSamples = oldMs;
   }
 
   // Monotonic: within same cycle, sevenDay and sevenDayTokens must not decrease

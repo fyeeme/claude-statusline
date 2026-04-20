@@ -662,8 +662,9 @@ describe('getGlmUsage', () => {
       now: () => NOW,
     }));
 
-    // Should have one sample at milestone key "10"
-    assert.deepEqual(written1.milestoneSamples, { '10': [100_000_000] });
+    // Should have one sample at milestone key "10" (stored as estimated 7d budget)
+    const est10 = Math.round(100_000_000 * 500 / 10);
+    assert.deepEqual(written1.milestoneSamples, { '10': [est10] });
 
     // Second call at 21% (milestone: key="20")
     let written2 = null;
@@ -678,16 +679,17 @@ describe('getGlmUsage', () => {
       writeCache: (data) => { written2 = data; },
       readCalibrationFields: () => ({
         subscriptionTimeMs: FIXED_SUB_TIME,
-        milestoneSamples: { '10': [100_000_000] },
+        milestoneSamples: { '10': [est10] },
         sevenDayStartAt: undefined,
       }),
       now: () => NOW + 60 * 1000,
     }));
 
-    // Should have samples at both "10" and "20"
-    assert.deepEqual(written2.milestoneSamples, { '10': [100_000_000], '20': [210_000_000] });
+    // Should have samples at both "10" and "20" (stored as estimated 7d budgets)
+    const est20 = Math.round(210_000_000 * 500 / 20);
+    assert.deepEqual(written2.milestoneSamples, { '10': [est10], '20': [est20] });
 
-    // Average calibration: (100M*500/10 + 210M*500/20) / 2 = (5000M + 5250M) / 2 = 5125M
+    // Average calibration: (est10 + est20) / 2 = (5000M + 5250M) / 2 = 5125M
     assert.ok(Math.abs(written2.calibratedLimit7d - 5_125_000_000) < 1);
   });
 
@@ -732,7 +734,7 @@ describe('getGlmUsage', () => {
       writeCache: (data) => { written = data; },
       readCalibrationFields: () => ({
         subscriptionTimeMs: FIXED_SUB_TIME,
-        milestoneSamples: { '10': [100_000_000], '20': [200_000_000] },
+        milestoneSamples: { '10': [5_000_000_000], '20': [5_000_000_000] },
         sevenDayStartAt: oldCycleStart,
       }),
       // Move time past old cycle so a new cycle starts
@@ -740,13 +742,15 @@ describe('getGlmUsage', () => {
     }));
 
     // Samples should be cleared (new cycle) then fresh one at milestone key "10" added
-    assert.deepEqual(written.milestoneSamples, { '10': [50_000_000] });
+    const est10 = Math.round(50_000_000 * 500 / 10);
+    assert.deepEqual(written.milestoneSamples, { '10': [est10] });
   });
 
   it('truncates samples to max 10 per milestone', async () => {
     const NOW = 1700000000000;
+    // Use estimated values (>= 200M) to avoid old-format migration clearing them
     const existingSamples = [];
-    for (let i = 0; i < 9; i++) existingSamples.push(100_000_000 + i * 1_000_000);
+    for (let i = 0; i < 9; i++) existingSamples.push(5_000_000_000 + i * 50_000_000);
 
     let written = null;
     await getGlmUsage(createMockDeps({
@@ -767,10 +771,11 @@ describe('getGlmUsage', () => {
     }));
 
     // 9 existing + 1 new = 10, no truncation
+    const newEst = Math.round(115_000_000 * 500 / 10);
     assert.equal(written.milestoneSamples['10'].length, 10);
-    assert.equal(written.milestoneSamples['10'][9], 115_000_000);
+    assert.equal(written.milestoneSamples['10'][9], newEst);
     // First sample preserved
-    assert.equal(written.milestoneSamples['10'][0], 100_000_000);
+    assert.equal(written.milestoneSamples['10'][0], 5_000_000_000);
 
     // Now add one more to trigger truncation
     const tenSamples = [...written.milestoneSamples['10']];
@@ -793,10 +798,11 @@ describe('getGlmUsage', () => {
     }));
 
     // Should be truncated to 10 (last 10 of 11)
+    const newestEst = Math.round(120_000_000 * 500 / 10);
     assert.equal(written2.milestoneSamples['10'].length, 10);
     // First sample should be the 2nd from previous batch (dropped the oldest)
-    assert.equal(written2.milestoneSamples['10'][0], 101_000_000);
-    assert.equal(written2.milestoneSamples['10'][9], 120_000_000);
+    assert.equal(written2.milestoneSamples['10'][0], 5_050_000_000);
+    assert.equal(written2.milestoneSamples['10'][9], newestEst);
   });
 
   it('uses existing samples during non-milestone full refresh', async () => {
@@ -814,15 +820,15 @@ describe('getGlmUsage', () => {
       writeCache: (data) => { written = data; },
       readCalibrationFields: () => ({
         subscriptionTimeMs: FIXED_SUB_TIME,
-        milestoneSamples: { '10': [100_000_000], '20': [210_000_000] },
+        milestoneSamples: { '10': [5_000_000_000], '20': [5_250_000_000] },
         sevenDayStartAt: undefined,
       }),
       now: () => NOW,
     }));
 
     // No new sample collected (47 is not milestone)
-    assert.deepEqual(written.milestoneSamples, { '10': [100_000_000], '20': [210_000_000] });
-    // Should use average from existing samples: (100M*500/10 + 210M*500/20) / 2 = 5125M
+    assert.deepEqual(written.milestoneSamples, { '10': [5_000_000_000], '20': [5_250_000_000] });
+    // Should use average from existing samples: (5000M + 5250M) / 2 = 5125M
     assert.ok(Math.abs(written.calibratedLimit7d - 5_125_000_000) < 1);
   });
 
@@ -845,9 +851,10 @@ describe('getGlmUsage', () => {
       now: () => NOW,
     }));
 
-    // Should work fine, create first sample
-    assert.deepEqual(written.milestoneSamples, { '10': [80_000_000] });
-    // Calibrated using the single sample
-    assert.equal(written.calibratedLimit7d, 80_000_000 * 500 / 10);
+    // Should work fine, create first sample (stored as estimated 7d budget)
+    const est10 = Math.round(80_000_000 * 500 / 10);
+    assert.deepEqual(written.milestoneSamples, { '10': [est10] });
+    // Calibrated using the single sample (already an estimate, so avg = estimate)
+    assert.equal(written.calibratedLimit7d, est10);
   });
 });
