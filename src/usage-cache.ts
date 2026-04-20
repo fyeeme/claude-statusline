@@ -39,10 +39,35 @@ export interface CachedUsageData {
   sevenDayResetAt?: number | null;
   /** Milestone token samples for averaging calibration: { "10": [tokensAt10pct, ...], "20": [...] } */
   milestoneSamples?: Record<string, number[]>;
+  /** Human-readable formatted timestamps (for easier JSON inspection) */
+  formattedTimestamps?: {
+    timestamp?: string;
+    fiveHourFetchedAt?: string;
+    calibratedAt?: string;
+    subscriptionTime?: string;
+    fiveHourStartAt?: string;
+    fiveHourResetAt?: string;
+    sevenDayStartAt?: string;
+    sevenDayResetAt?: string;
+  };
 }
 
 const CACHE_FILENAME = '.usage-cache.json';
 const LOG_FILENAME = 'usage.log';
+
+/** Format timestamp to human-readable string in UTC+8 (Shanghai timezone): "2025-04-20 22:30:45 CST" */
+function formatTimestampForCache(ms: number): string {
+  const date = new Date(ms);
+  // Convert to UTC+8 by adding 8 hours and formatting
+  const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  const yyyy = utc8.getUTCFullYear();
+  const mm = String(utc8.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(utc8.getUTCDate()).padStart(2, '0');
+  const hh = String(utc8.getUTCHours()).padStart(2, '0');
+  const min = String(utc8.getUTCMinutes()).padStart(2, '0');
+  const ss = String(utc8.getUTCSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss} CST`;
+}
 const LOG_MAX_BYTES = 512 * 1024; // 512KB
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const ERROR_TTL_BASE_MS = 60 * 1000; // 60 seconds for error states
@@ -96,43 +121,48 @@ export function readCache(currentPlatform: UsagePlatform): CachedUsageData | nul
  *  These fields persist across cache TTL cycles for stable calculations. */
 export function readCalibrationFields(): Pick<CachedUsageData, 'calibratedLimit7d' | 'calibratedAt' | 'calibratedAtPct' | 'subscriptionTimeMs' | 'sevenDay' | 'sevenDayTokens' | 'sevenDayStartAt' | 'milestoneSamples'> | null {
   const cachePath = getCachePath();
-  try {
-    if (!fs.existsSync(cachePath)) {
+  const maxRetries = 2;
+  const retryDelay = 5; // 5ms between retries
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (!fs.existsSync(cachePath)) {
+        return null;
+      }
+
+      const raw = fs.readFileSync(cachePath, 'utf-8');
+      const entry: CachedUsageData = JSON.parse(raw);
+
+      // Return all available fields if any calibration or subscription data exists
+      if (entry.calibratedLimit7d != null || entry.calibratedAt != null || entry.subscriptionTimeMs != null) {
+        return {
+          calibratedLimit7d: entry.calibratedLimit7d,
+          calibratedAt: entry.calibratedAt,
+          calibratedAtPct: entry.calibratedAtPct,
+          subscriptionTimeMs: entry.subscriptionTimeMs,
+          sevenDay: entry.sevenDay,
+          sevenDayTokens: entry.sevenDayTokens,
+          sevenDayStartAt: entry.sevenDayStartAt,
+          milestoneSamples: entry.milestoneSamples,
+        };
+      }
+
+      return null;
+    } catch (err) {
+      // On parse error, retry briefly (might be concurrent write in progress)
+      if (attempt < maxRetries && (err as SyntaxError)?.name === 'SyntaxError') {
+        const start = Date.now();
+        while (Date.now() - start < retryDelay) {
+          // Busy wait for retryDelay ms
+        }
+        continue;
+      }
+      // Other errors or final attempt: give up
       return null;
     }
-
-    const raw = fs.readFileSync(cachePath, 'utf-8');
-    const entry: CachedUsageData = JSON.parse(raw);
-
-    if (entry.calibratedLimit7d != null && entry.calibratedAt != null) {
-      return {
-        calibratedLimit7d: entry.calibratedLimit7d,
-        calibratedAt: entry.calibratedAt,
-        calibratedAtPct: entry.calibratedAtPct,
-        subscriptionTimeMs: entry.subscriptionTimeMs,
-        sevenDay: entry.sevenDay,
-        sevenDayTokens: entry.sevenDayTokens,
-        sevenDayStartAt: entry.sevenDayStartAt,
-        milestoneSamples: entry.milestoneSamples,
-      };
-    }
-
-    // Also return subscription-only + monotonic data (no calibration yet)
-    if (entry.subscriptionTimeMs != null) {
-      return {
-        subscriptionTimeMs: entry.subscriptionTimeMs,
-        calibratedAtPct: entry.calibratedAtPct,
-        sevenDay: entry.sevenDay,
-        sevenDayTokens: entry.sevenDayTokens,
-        sevenDayStartAt: entry.sevenDayStartAt,
-        milestoneSamples: entry.milestoneSamples,
-      };
-    }
-
-    return null;
-  } catch {
-    return null;
   }
+
+  return null;
 }
 
 /** Merge new cache data with existing cache to protect calibration and monotonic fields
@@ -155,6 +185,11 @@ function mergeWithExistingCache(data: Omit<CachedUsageData, 'timestamp'>, cacheP
     'calibratedLimit7d', 'calibratedAt', 'calibratedAtPct',
     'subscriptionTimeMs',
   ] as const;
+
+  // Preserve formattedTimestamps if new data doesn't have it
+  if (merged.formattedTimestamps === undefined && existing.formattedTimestamps !== undefined) {
+    merged.formattedTimestamps = existing.formattedTimestamps;
+  }
   for (const field of preserveFields) {
     if (merged[field] === undefined && existing[field] !== undefined) {
       merged[field] = existing[field];
@@ -176,15 +211,42 @@ function mergeWithExistingCache(data: Omit<CachedUsageData, 'timestamp'>, cacheP
     merged.milestoneSamples = oldMs;
   }
 
+  // Cycle boundary: preserve the newer cycle's 7d data.
+  // When two concurrent sessions have different cycle starts, the side with the
+  // larger sevenDayStartAt is the newer (more recent) cycle.  The older cycle's
+  // sevenDay values are stale and must not overwrite the newer ones.
+  const cycleChanged = (
+    merged.sevenDayStartAt != null &&
+    existing.sevenDayStartAt != null &&
+    merged.sevenDayStartAt !== existing.sevenDayStartAt
+  );
+  if (cycleChanged) {
+    const mergedIsNewer = ((merged.sevenDayStartAt as number | null | undefined) ?? 0) > ((existing.sevenDayStartAt as number | null | undefined) ?? 0);
+    if (!mergedIsNewer) {
+      // Existing cache has the newer cycle → preserve its 7d data
+      merged.sevenDay = existing.sevenDay;
+      merged.sevenDayTokens = existing.sevenDayTokens;
+      merged.sevenDayStartAt = existing.sevenDayStartAt;
+      merged.sevenDayResetAt = existing.sevenDayResetAt;
+    }
+    // If merged is newer, its computed values are already correct for the new cycle
+  }
+
   // Monotonic: within same cycle, sevenDay and sevenDayTokens must not decrease
-  if (merged.sevenDayStartAt != null && existing.sevenDayStartAt != null
+  // EXCEPTION: if tokens dropped >50%, the cached value was likely from a wrong API query
+  // (e.g. now-7d fallback due to calibration loss), so allow the drop.
+  if (!cycleChanged &&
+      merged.sevenDayStartAt != null && existing.sevenDayStartAt != null
       && merged.sevenDayStartAt === existing.sevenDayStartAt) {
+    const tokenDropIsMassive = merged.sevenDayTokens != null && existing.sevenDayTokens != null
+      && typeof merged.sevenDayTokens === 'number' && typeof existing.sevenDayTokens === 'number'
+      && merged.sevenDayTokens < existing.sevenDayTokens * 0.5;
     if (merged.sevenDay !== null && existing.sevenDay != null
         && typeof merged.sevenDay === 'number' && typeof existing.sevenDay === 'number'
         && merged.sevenDay < existing.sevenDay) {
       merged.sevenDay = existing.sevenDay;
     }
-    if (merged.sevenDayTokens != null && existing.sevenDayTokens != null
+    if (!tokenDropIsMassive && merged.sevenDayTokens != null && existing.sevenDayTokens != null
         && typeof merged.sevenDayTokens === 'number' && typeof existing.sevenDayTokens === 'number'
         && merged.sevenDayTokens < existing.sevenDayTokens) {
       merged.sevenDayTokens = existing.sevenDayTokens;
@@ -203,14 +265,28 @@ export function writeCache(data: Omit<CachedUsageData, 'timestamp'>, preserveTim
     ensureCacheDir();
 
     const merged = mergeWithExistingCache(data, cachePath);
+    const timestamp = preserveTimestamp ?? Date.now();
+
+    // Generate human-readable formatted timestamps (only include non-null values)
+    const formattedTimestamps: NonNullable<CachedUsageData['formattedTimestamps']> = {};
+    formattedTimestamps.timestamp = formatTimestampForCache(timestamp);
+    if (merged.fiveHourFetchedAt != null) formattedTimestamps.fiveHourFetchedAt = formatTimestampForCache(merged.fiveHourFetchedAt);
+    if (merged.calibratedAt != null) formattedTimestamps.calibratedAt = formatTimestampForCache(merged.calibratedAt);
+    if (merged.subscriptionTimeMs != null) formattedTimestamps.subscriptionTime = formatTimestampForCache(merged.subscriptionTimeMs);
+    if (merged.fiveHourStartAt != null) formattedTimestamps.fiveHourStartAt = formatTimestampForCache(merged.fiveHourStartAt);
+    if (merged.fiveHourResetAt != null) formattedTimestamps.fiveHourResetAt = formatTimestampForCache(merged.fiveHourResetAt);
+    if (merged.sevenDayStartAt != null) formattedTimestamps.sevenDayStartAt = formatTimestampForCache(merged.sevenDayStartAt);
+    if (merged.sevenDayResetAt != null) formattedTimestamps.sevenDayResetAt = formatTimestampForCache(merged.sevenDayResetAt);
+
     const entry: CachedUsageData = {
       ...merged,
-      timestamp: preserveTimestamp ?? Date.now(),
+      timestamp,
+      formattedTimestamps,
     };
 
     // Atomic write: write to temp file, then rename
     const tmpPath = cachePath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(entry), { mode: 0o600 });
+    fs.writeFileSync(tmpPath, JSON.stringify(entry, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, cachePath);
 
     // Ensure correct permissions on the final file

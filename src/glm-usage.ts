@@ -368,6 +368,16 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       const quotaResult = await deps.fetchGlmQuotaOnly(baseDomain, headers, deps.appendLog);
       const newFiveHour = quotaResult.fiveHourPct;
 
+      // Detect 7d cycle change from subscription time → must do full refresh
+      let cycleChangedNeedsRefresh = false;
+      if (cached.subscriptionTimeMs != null) {
+        const freshCycleStart = computeCycleStart(cached.subscriptionTimeMs, nowMs);
+        if (cached.sevenDayStartAt != null && freshCycleStart !== cached.sevenDayStartAt) {
+          cycleChangedNeedsRefresh = true;
+          deps.appendLog(`cycle=CHANGED old=${new Date(cached.sevenDayStartAt).toISOString().slice(0, 19)} new=${new Date(freshCycleStart).toISOString().slice(0, 19)} → full refresh`);
+        }
+      }
+
       // Milestone detection: exact hit (pct % 10 === 1) OR crossing a 10% boundary
       // since last cached value. Crossing detection catches jumps like 9% → 16%.
       if (newFiveHour != null && cached.fiveHour != null && newFiveHour > cached.fiveHour) {
@@ -381,9 +391,11 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       const isMilestone = (newFiveHour != null && newFiveHour > 1 && newFiveHour % 10 === 1)
         || newFiveHour === 100
         || crossedMilestoneKey != null;
-      if (isMilestone) {
-        const reason = crossedMilestoneKey ? `crossed ${crossedMilestoneKey}%` : `exact ${newFiveHour}%`;
-        deps.appendLog(`cache=5h-MILESTONE 5h=${newFiveHour}% (${reason}) → full refresh`);
+      if (isMilestone || cycleChangedNeedsRefresh) {
+        const reason = cycleChangedNeedsRefresh
+          ? 'cycle-changed'
+          : (crossedMilestoneKey ? `crossed ${crossedMilestoneKey}%` : `exact ${newFiveHour}%`);
+        deps.appendLog(`cache=5h-${cycleChangedNeedsRefresh ? 'CYCLE-CHANGED' : 'MILESTONE'} 5h=${newFiveHour ?? '-'}% (${reason}) → full refresh`);
         // Fall through to full refresh below
       } else {
         // Lightweight update: only 5h fields, preserve 7d TTL
@@ -454,11 +466,30 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
 
   // Read calibration state before API call (TTL-exempt, local file read only)
   const calibration = deps.readCalibrationFields();
+
+  // Current timestamp (needed before API call for cycleStart calculation)
   const nowMs = deps.now();
 
-  // Compute cycle start from cached subscription time (if available)
+  // DEBUG: log cycleStart calculation
   const subscriptionTimeMs = calibration?.subscriptionTimeMs;
   const cycleStart = subscriptionTimeMs != null ? computeCycleStart(subscriptionTimeMs, nowMs) : undefined;
+  if (cycleStart != null) {
+    deps.appendLog(`debug cycleStart computed=${new Date(cycleStart).toISOString().replace('T', ' ').slice(0, 19)} subMs=${subscriptionTimeMs}`);
+  } else {
+    deps.appendLog(`debug cycleStart=null subMs=${subscriptionTimeMs}`);
+  }
+
+  // DEBUG: log calibration state
+  const debugCalibration = calibration ? {
+    calibratedLimit7d: calibration.calibratedLimit7d,
+    calibratedAt: calibration.calibratedAt,
+    calibratedAtPct: calibration.calibratedAtPct,
+    subscriptionTimeMs: calibration.subscriptionTimeMs,
+    sevenDay: calibration.sevenDay,
+    sevenDayTokens: calibration.sevenDayTokens,
+    sevenDayStartAt: calibration.sevenDayStartAt,
+    milestoneSamplesKeys: calibration.milestoneSamples ? Object.keys(calibration.milestoneSamples) : [],
+  } : null;
 
   try {
     const results = await deps.fetchGlmApi(baseDomain, headers, cycleStart, deps.appendLog);
@@ -630,6 +661,8 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     const sevenDayResetAt = effectiveCycleStart != null ? effectiveCycleStart + 7 * 24 * 60 * 60 * 1000 : null;
 
     // Monotonic enforcement: within the same cycle, usage must not decrease
+    // EXCEPTION: if tokens dropped >50%, the cached value was likely from a wrong API query
+    // (e.g. now-7d fallback due to calibration loss), so allow the drop.
     const prevCycleStart = calibration?.sevenDayStartAt;
     let monotonicApplied = false;
     const preMono7d = sevenDay;
@@ -637,11 +670,18 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     if (sevenDayStartAt != null && prevCycleStart != null && sevenDayStartAt === prevCycleStart) {
       const prevSevenDay = calibration?.sevenDay;
       const prevSevenDayTokens = calibration?.sevenDayTokens;
-      if (sevenDay !== null && prevSevenDay != null && sevenDay < prevSevenDay) {
+      const tokenDropIsMassive = sevenDayTokens != null && prevSevenDayTokens != null
+        && sevenDayTokens < prevSevenDayTokens * 0.5;
+      // DEBUG: log monotonic guard decision
+      if (prevSevenDayTokens != null && sevenDayTokens != null) {
+        const dropRatio = sevenDayTokens / prevSevenDayTokens;
+        deps.appendLog(`mono guard drop=${(dropRatio*100).toFixed(1)}% massive=${tokenDropIsMassive} prev=${prevSevenDayTokens} new=${sevenDayTokens}`);
+      }
+      if (!tokenDropIsMassive && sevenDay !== null && prevSevenDay != null && sevenDay < prevSevenDay) {
         sevenDay = prevSevenDay;
         monotonicApplied = true;
       }
-      if (sevenDayTokens != null && prevSevenDayTokens != null && sevenDayTokens < prevSevenDayTokens) {
+      if (!tokenDropIsMassive && sevenDayTokens != null && prevSevenDayTokens != null && sevenDayTokens < prevSevenDayTokens) {
         sevenDayTokens = prevSevenDayTokens;
         monotonicApplied = true;
       }
@@ -692,8 +732,9 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
         : 'mono=-';
       const sampleCount = milestoneSamples ? Object.values(milestoneSamples).reduce((s, a) => s + a.length, 0) : 0;
       const sampleKeys = milestoneSamples ? Object.keys(milestoneSamples).join(',') : '-';
+      const debugCalJson = debugCalibration ? JSON.stringify(debugCalibration) : '-';
       deps.appendLog(
-        `calc limit7d=${limitM}M@${calibratedAtPct ?? '-'} samples=${sampleCount}(${sampleKeys}) subMs=${effectiveSubscriptionTime ?? '-'} cycle=${fmtTs(sevenDayStartAt)} 7d=${sevenDay ?? '-'}%(${mM(sevenDayTokens)}) ${monoTag} prev7d=${prev7dPct ?? '-'}%(${mM(prev7dTok)})`,
+        `calc limit7d=${limitM}M@${calibratedAtPct ?? '-'} samples=${sampleCount}(${sampleKeys}) subMs=${effectiveSubscriptionTime ?? '-'} cycle=${fmtTs(sevenDayStartAt)} 7d=${sevenDay ?? '-'}%(${mM(sevenDayTokens)}) ${monoTag} prev7d=${prev7dPct ?? '-'}%(${mM(prev7dTok)}) cal=${debugCalJson}`,
       );
     }
 
