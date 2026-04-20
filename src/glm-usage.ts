@@ -496,9 +496,25 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       milestoneSamples = undefined;
     }
 
-    // Migration: clear old-format samples (raw tokens < 200M, estimates should be ≥ ~500M)
-    if (milestoneSamples && Object.values(milestoneSamples).some(arr => arr.some(v => v < 200_000_000))) {
-      milestoneSamples = undefined;
+    // Migration: convert old-format raw-token samples to estimated 7d budgets
+    if (milestoneSamples) {
+      let converted = false;
+      for (const pctStr of Object.keys(milestoneSamples)) {
+        const pct = Number(pctStr);
+        if (pct <= 0) continue;
+        const arr = milestoneSamples[pctStr];
+        // If any value looks like raw tokens (< 200M), convert all values in this key
+        if (arr.some(v => v < 200_000_000)) {
+          milestoneSamples[pctStr] = arr.map(v => Math.round(v * 500 / pct));
+          converted = true;
+        }
+      }
+      // Dedup after conversion
+      if (converted) {
+        for (const pctStr of Object.keys(milestoneSamples)) {
+          milestoneSamples[pctStr] = [...new Set(milestoneSamples[pctStr])];
+        }
+      }
     }
 
     const canCalibrate = fiveHour !== null
