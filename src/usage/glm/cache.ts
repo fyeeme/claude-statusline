@@ -76,16 +76,8 @@ export function writeState(state: CalibrationState): void {
   try {
     getCacheDir();
 
-    const entry = {
-      ...state,
-      formattedTimestamps: {
-        calibratedAt: state.calibratedAt != null ? formatTimestampForCache(state.calibratedAt) : undefined,
-        subscriptionTime: state.subscriptionTimeMs != null ? formatTimestampForCache(state.subscriptionTimeMs) : undefined,
-      },
-    };
-
     const tmpPath = statePath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(entry, null, 2), { mode: 0o600 });
+    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, statePath);
 
     try { fs.chmodSync(statePath, 0o600); } catch { /* best-effort */ }
