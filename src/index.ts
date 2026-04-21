@@ -8,9 +8,9 @@ import { parseExtraCmdArg, runExtraCmd } from "./extra-cmd.js";
 import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
 import { setLanguage, t } from "./i18n/index.js";
-import { getGlmUsage } from "./glm-usage.js";
+import { getGlmUsage } from "./usage/index.js";
 import type { RenderContext, UsageData } from "./types.js";
-import type { GlmUsageDeps } from "./glm-usage.js";
+import type { GlmUsageDeps } from "./usage/index.js";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
