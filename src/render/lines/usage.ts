@@ -137,18 +137,20 @@ function formatUsageWindowPart({
   // For rolling/cycle windows: no reset time, add semantic label
   const isSemanticWindow = windowType === 'rolling' || windowType === 'cycle';
 
-  // Build suffix: token count for cycle, window type label for rolling
+  // Build suffix for cycle windows
   let suffix = '';
   if (windowType === 'rolling') {
     suffix = ` (${styledLabel})`;
   } else if (windowType === 'cycle' && tokenCount != null && tokenCount > 0) {
-    const reset = showResetTime ? formatResetTime(resetAt) : '';
-    suffix = reset
-      ? ` (${formatTokenCount(tokenCount)} / ${styledLabel}, ${t("format.resetsIn")} ${reset})`
-      : ` (${formatTokenCount(tokenCount)} / ${styledLabel})`;
+    // 7d with tokens: "138M, 5d" (token count + remaining time)
+    const remaining = formatResetTime(resetAt);
+    suffix = remaining ? ` (${formatTokenCount(tokenCount)}, ${remaining})` : ` (${formatTokenCount(tokenCount)})`;
+  } else if (windowType === 'cycle' && resetAt != null) {
+    // 5h cycle: remaining time "3h 30m"
+    const remaining = formatResetTime(resetAt);
+    suffix = remaining ? ` (${remaining})` : '';
   } else if (windowType === 'cycle') {
-    const reset = showResetTime ? formatResetTime(resetAt) : '';
-    suffix = reset ? ` (${styledLabel}, ${t("format.resetsIn")} ${reset})` : ` (${styledLabel})`;
+    suffix = ` (${styledLabel})`;
   }
 
   // For fixed windows (Anthropic), show reset time if available
@@ -166,7 +168,7 @@ function formatUsageWindowPart({
       : `${styledLabel} ${usageDisplay}`;
   }
 
-  // Rolling/cycle: no reset time, show suffix
+  // Rolling/cycle: show suffix
   if (usageBarEnabled) {
     const body = `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}${suffix}`;
     return forceLabel ? `${styledLabel} ${body}` : body;
