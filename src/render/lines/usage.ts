@@ -4,7 +4,7 @@ import { getProviderLabel } from "../../stdin.js";
 import { critical, label, getQuotaColor, quotaBar, RESET } from "../colors.js";
 import { getAdaptiveBarWidth } from "../../utils/terminal.js";
 import { t } from "../../i18n/index.js";
-import { formatTokenCount } from "../../usage/api.js";
+import { formatTokenCount } from "../../usage/glm/api.js";
 
 export function renderUsageLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;

@@ -1287,7 +1287,7 @@ test('renderUsageLine shows weekly-only usage without a ghost 5h section', () =>
   };
 
   const line = stripAnsi(renderUsageLine(ctx));
-  assert.ok(line.includes('Usage'), `should render usage line: ${line}`);
+  assert.ok(line.includes('Use'), `should render usage line: ${line}`);
   assert.ok(!line.includes('5h'), `should not render a ghost 5h section: ${line}`);
   assert.ok(line.includes('Weekly'), `should render the weekly window when it is the only usage value: ${line}`);
   assert.ok(line.includes('13%'), `should render the weekly percentage: ${line}`);

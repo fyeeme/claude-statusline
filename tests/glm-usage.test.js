@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getGlmUsage } from '../dist/usage/index.js';
-import { formatTokenCount } from '../dist/usage/api.js';
+import { getGlmUsage } from '../dist/usage/glm/index.js';
+import { formatTokenCount } from '../dist/usage/glm/api.js';
 
 const NOW = 1_700_000_000_000;
 const FIXED_SUB_TIME = new Date('2026-03-30T07:43:28.000Z').getTime();

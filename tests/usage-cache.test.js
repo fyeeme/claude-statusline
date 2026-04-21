@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { readCache, writeCache, getErrorTtlMs, getRateLimitedTtlMs, appendLog, migrateOldCache, readState, writeState } from '../dist/usage/cache.js';
-import { inferSubscriptionTime, computeCycleStart } from '../dist/usage/calibration.js';
+import { readCache, writeCache, getErrorTtlMs, getRateLimitedTtlMs, appendLog, migrateOldCache, readState, writeState } from '../dist/usage/glm/cache.js';
+import { inferSubscriptionTime, computeCycleStart } from '../dist/usage/glm/calibration.js';
 
 const CACHE_DIR = path.join(os.homedir(), '.claude', 'plugins', 'claude-hud');
 const CACHE_PATH = path.join(CACHE_DIR, '.usage-cache.json');

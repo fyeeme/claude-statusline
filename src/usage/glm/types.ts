@@ -1,4 +1,4 @@
-import type { UsagePlatform, UsageWindowType } from '../types.js';
+import type { UsagePlatform, UsageWindowType } from '../../types.js';
 
 /** Persistent calibration state — survives cache TTL, stored in .usage-state.json */
 export interface CalibrationState {

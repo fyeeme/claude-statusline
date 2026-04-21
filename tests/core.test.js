@@ -238,8 +238,13 @@ test('getUsageFromStdin parses official Claude Code rate_limits payload', () => 
   assert.deepEqual(usage, {
     fiveHour: 8,
     sevenDay: 100,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(1710000000 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(1710600000 * 1000),
+    platform: 'anthropic',
+    fiveHourWindowType: 'fixed',
+    sevenDayWindowType: 'fixed',
   });
 });
 
@@ -260,8 +265,13 @@ test('getUsageFromStdin rejects invalid fields and keeps only official usage dat
   assert.deepEqual(usage, {
     fiveHour: 0,
     sevenDay: null,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
+    platform: 'anthropic',
+    fiveHourWindowType: 'fixed',
+    sevenDayWindowType: 'fixed',
   });
 });
 

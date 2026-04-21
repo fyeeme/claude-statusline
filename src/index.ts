@@ -1,4 +1,4 @@
-import { readStdin, getUsageFromStdin } from "./stdin.js";
+import { readStdin } from "./stdin.js";
 import { parseTranscript } from "./transcript.js";
 import { render } from "./render/index.js";
 import { countConfigs } from "./config-reader.js";
@@ -8,16 +8,15 @@ import { parseExtraCmdArg, runExtraCmd } from "./extra-cmd.js";
 import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
 import { setLanguage, t } from "./i18n/index.js";
-import { getGlmUsage } from "./usage/index.js";
-import type { RenderContext, UsageData } from "./types.js";
-import type { GlmUsageDeps } from "./usage/index.js";
+import { getUsage } from "./usage/index.js";
+import type { UsageStrategyDeps } from "./usage/index.js";
+import type { RenderContext } from "./types.js";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
 export type MainDeps = {
   readStdin: typeof readStdin;
-  getUsageFromStdin: typeof getUsageFromStdin;
-  getGlmUsage: (overrides?: Partial<GlmUsageDeps>) => Promise<UsageData | null>;
+  getUsage: typeof getUsage;
   parseTranscript: typeof parseTranscript;
   countConfigs: typeof countConfigs;
   getGitStatus: typeof getGitStatus;
@@ -34,8 +33,7 @@ export type MainDeps = {
 export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
   const deps: MainDeps = {
     readStdin,
-    getUsageFromStdin,
-    getGlmUsage,
+    getUsage,
     parseTranscript,
     countConfigs,
     getGitStatus,
@@ -77,15 +75,10 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
       ? await deps.getGitStatus(stdin.cwd)
       : null;
 
-    // Usage comes from Claude Code's stdin rate_limits (Anthropic),
-    // or falls back to GLM API when rate_limits is absent.
+    // Platform-aware usage strategy: detects subscription and routes accordingly
     let usageData: RenderContext["usageData"] = null;
     if (config.display.showUsage !== false) {
-      usageData = deps.getUsageFromStdin(stdin);
-      // GLM fallback: when stdin has no rate_limits, try GLM API
-      if (!usageData) {
-        usageData = await deps.getGlmUsage();
-      }
+      usageData = await deps.getUsage(stdin);
     }
 
     const extraCmd = deps.parseExtraCmdArg();

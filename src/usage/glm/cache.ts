@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { getHudPluginDir } from '../claude-config-dir.js';
-import type { UsagePlatform } from '../types.js';
+import { getHudPluginDir } from '../../claude-config-dir.js';
+import type { UsagePlatform } from '../../types.js';
 import type { CalibrationState, CachedUsage } from './types.js';
 
 const STATE_FILENAME = '.usage-state.json';

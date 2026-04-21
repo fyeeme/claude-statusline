@@ -230,19 +230,20 @@ test("main includes git status in render context", async () => {
 
 test("main includes usageData in render context", async () => {
   let renderedContext;
+  const stdin = {
+    model: { display_name: "Opus" },
+    context_window: {
+      context_window_size: 100,
+      current_usage: { input_tokens: 10 },
+    },
+    rate_limits: {
+      five_hour: { used_percentage: 49.6, resets_at: 1710000000 },
+      seven_day: { used_percentage: 25.2, resets_at: 1710600000 },
+    },
+  };
 
   await main({
-    readStdin: async () => ({
-      model: { display_name: "Opus" },
-      context_window: {
-        context_window_size: 100,
-        current_usage: { input_tokens: 10 },
-      },
-      rate_limits: {
-        five_hour: { used_percentage: 49.6, resets_at: 1710000000 },
-        seven_day: { used_percentage: 25.2, resets_at: 1710600000 },
-      },
-    }),
+    readStdin: async () => stdin,
     parseTranscript: async () => ({ tools: [], agents: [], todos: [] }),
     countConfigs: async () => ({
       claudeMdCount: 0,
@@ -251,6 +252,10 @@ test("main includes usageData in render context", async () => {
       hooksCount: 0,
     }),
     getGitBranch: async () => null,
+    getUsage: async (s) => {
+      const { getUsageFromStdin } = await import("../dist/usage/claude/index.js");
+      return getUsageFromStdin(s);
+    },
     render: (ctx) => {
       renderedContext = ctx;
     },
@@ -259,22 +264,29 @@ test("main includes usageData in render context", async () => {
   assert.deepEqual(renderedContext?.usageData, {
     fiveHour: 50,
     sevenDay: 25,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(1710000000 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(1710600000 * 1000),
+    platform: 'anthropic',
+    fiveHourWindowType: 'fixed',
+    sevenDayWindowType: 'fixed',
   });
 });
 
 test("main uses stdin-native rate_limits when available", async () => {
   let renderedContext;
 
+  const stdin = {
+    model: { display_name: "Opus" },
+    rate_limits: {
+      five_hour: { used_percentage: 21.9, resets_at: 1710000000 },
+      seven_day: { used_percentage: 55.2, resets_at: 1710600000 },
+    },
+  };
+
   await main({
-    readStdin: async () => ({
-      model: { display_name: "Opus" },
-      rate_limits: {
-        five_hour: { used_percentage: 21.9, resets_at: 1710000000 },
-        seven_day: { used_percentage: 55.2, resets_at: 1710600000 },
-      },
-    }),
+    readStdin: async () => stdin,
     parseTranscript: async () => ({ tools: [], agents: [], todos: [] }),
     countConfigs: async () => ({
       claudeMdCount: 0,
@@ -282,8 +294,11 @@ test("main uses stdin-native rate_limits when available", async () => {
       mcpCount: 0,
       hooksCount: 0,
     }),
-    getGlmUsage: async () => null,
     getGitStatus: async () => null,
+    getUsage: async (s) => {
+      const { getUsageFromStdin } = await import("../dist/usage/claude/index.js");
+      return getUsageFromStdin(s);
+    },
     render: (ctx) => {
       renderedContext = ctx;
     },
@@ -292,8 +307,13 @@ test("main uses stdin-native rate_limits when available", async () => {
   assert.deepEqual(renderedContext?.usageData, {
     fiveHour: 22,
     sevenDay: 55,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(1710000000 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(1710600000 * 1000),
+    platform: 'anthropic',
+    fiveHourWindowType: 'fixed',
+    sevenDayWindowType: 'fixed',
   });
 });
 
@@ -315,8 +335,8 @@ test("main leaves usageData null when stdin rate_limits are absent", async () =>
       mcpCount: 0,
       hooksCount: 0,
     }),
-    getGlmUsage: async () => null,
     getGitStatus: async () => null,
+    getUsage: async () => null,
     render: (ctx) => {
       renderedContext = ctx;
     },
@@ -344,7 +364,6 @@ test("main includes Claude Code version in render context only when enabled", as
       mcpCount: 0,
       hooksCount: 0,
     }),
-    getGlmUsage: async () => null,
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
@@ -408,7 +427,7 @@ test("main skips Claude Code version lookup when disabled", async () => {
       mcpCount: 0,
       hooksCount: 0,
     }),
-    getGlmUsage: async () => null,
+    
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
@@ -476,7 +495,7 @@ test("main includes memoryUsage in render context only for expanded layout when 
       mcpCount: 0,
       hooksCount: 0,
     }),
-    getGlmUsage: async () => null,
+    
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
@@ -540,7 +559,7 @@ test("main skips memoryUsage lookup for compact layout even when enabled", async
       mcpCount: 0,
       hooksCount: 0,
     }),
-    getGlmUsage: async () => null,
+    
     getGitStatus: async () => null,
     getUsage: async () => null,
     loadConfig: async () => ({
