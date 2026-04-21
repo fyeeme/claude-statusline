@@ -243,23 +243,24 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     const newLimit = newState.calibratedLimit7d;
     const t5hM = Math.floor(fetched.tokens5h / 1e6);
     const pct = fetched.fiveHourPct ?? 0;
+    const estimate = (pct > 0 && fetched.tokens5h > 0) ? Math.floor((fetched.tokens5h * 500 / pct) / 1e6) : 0;
+    const prevLimitM = prevLimit ? Math.floor(prevLimit / 1e6) : 0;
     let calibTag: string;
     if (newLimit != null) {
       if (prevLimit == null) {
-        calibTag = `single:${t5hM}M*500/${pct}`;
+        calibTag = `single:${estimate}M`;
       } else if (newLimit !== prevLimit) {
-        calibTag = `ema:${t5hM}M*500/${pct}→${limitM}M`;
+        calibTag = `ema:0.2*${estimate}M+0.8*${prevLimitM}M=${limitM}M`;
       } else {
         calibTag = 'preserved';
       }
-    } else if (effectiveLimit != null) {
-      calibTag = 'limit-only';
     } else {
       calibTag = 'none';
     }
     const t5h = fetched.tokens5h;
     const t7d = tokens7d;
-    deps.appendLog(`api 5h=${fetched.fiveHourPct ?? '-'}%(${t5h != null ? Math.floor(t5h / 1e6) : '-'}M) 7d=${guarded.sevenDay ?? '-'}%(${guarded.sevenDayTokens ? Math.floor(guarded.sevenDayTokens / 1e6) : '-'}M/${t7d != null ? Math.floor(t7d / 1e6) : '-'}M) limit=${limitM}M(${calibTag}) cycle=${sevenDayStartAt != null ? new Date(sevenDayStartAt).toISOString().slice(5, 16) : '-'}`);
+    const elM = effectiveLimit ? Math.floor(effectiveLimit / 1e6) : 0;
+    deps.appendLog(`api 5h=${fetched.fiveHourPct ?? '-'}%(${t5h != null ? Math.floor(t5h / 1e6) : '-'}M) 7d=${guarded.sevenDay ?? '-'}%(${guarded.sevenDayTokens ? Math.floor(guarded.sevenDayTokens / 1e6) : '-'}M/${elM}M) limit=${limitM}M(${calibTag}) cycle=${sevenDayStartAt != null ? new Date(sevenDayStartAt).toISOString().slice(5, 16) : '-'}`);
 
     return {
       fiveHour: fetched.fiveHourPct,
