@@ -183,7 +183,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     }
 
     // Calibrate (EMA)
-    const calibrated = updateCalibration(fetched.tokens5h, fetched.fiveHourPct ?? 0, state, nowMs);
+    const calibrated = updateCalibration(fetched.tokens5h, fetched.fiveHourPct ?? 0, state, nowMs, deps.appendLog);
     // Preserve subscription time in state
     const newState: CalibrationState = {
       calibratedLimit7d: calibrated.calibratedLimit7d,

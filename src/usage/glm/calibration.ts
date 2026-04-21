@@ -10,13 +10,17 @@ const ALPHA = 0.2;
  *
  * On every full refresh where fiveHourPct >= 10, we compute an instantaneous
  * estimate of the 7d token limit and blend it with the previous value via EMA.
- * Below 10% the signal is too noisy — the caller should use a fallback estimate.
+ * Below 10% the signal is too noisy — skip update, preserve previous.
+ *
+ * Anti-regression: calibratedLimit7d never decreases. If the new EMA value
+ * is lower, the previous value is kept and a warning is logged.
  */
 export function updateCalibration(
   tokens5h: number,
   fiveHourPct: number,
   previous: CalibrationState | null,
   nowMs: number,
+  warn?: (msg: string) => void,
 ): CalibrationState {
   // Rule 1: Not enough signal — skip update (< 10% is too noisy)
   if (fiveHourPct < 10 || tokens5h <= 0) {
@@ -35,14 +39,17 @@ export function updateCalibration(
     };
   }
 
-  // Rule 3: EMA update with monotonic protection
-  let ema = ALPHA * estimate + (1 - ALPHA) * previous.calibratedLimit7d;
+  // Rule 3: EMA update with anti-regression
+  const prev = previous.calibratedLimit7d;
+  const ema = ALPHA * estimate + (1 - ALPHA) * prev;
 
-  // Monotonic protection: prevent anomalous estimates from pulling the value
-  // down too aggressively.  If the EMA drops below 80% of the previous value,
-  // keep the previous value instead.
-  if (ema < previous.calibratedLimit7d * 0.8) {
-    ema = previous.calibratedLimit7d;
+  if (ema < prev) {
+    warn?.(`calib-regress: ema=${Math.floor(ema / 1e6)}M < prev=${Math.floor(prev / 1e6)}M, estimate=${Math.floor(estimate / 1e6)}M at 5h=${fiveHourPct}%/${Math.floor(tokens5h / 1e6)}M — keeping prev`);
+    return {
+      calibratedLimit7d: prev,
+      calibratedAt: nowMs,
+      subscriptionTimeMs: previous.subscriptionTimeMs,
+    };
   }
 
   return {
