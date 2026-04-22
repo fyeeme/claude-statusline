@@ -139,7 +139,9 @@ test('render wraps long lines to terminal width and keeps all activity lines vis
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 3,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000),
   };
   ctx.transcript.tools = [
@@ -296,7 +298,9 @@ test('render does not wrap when no real terminal width is available', () => {
     planName: 'Pro',
     fiveHour: 42,
     sevenDay: 12,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
 
@@ -331,7 +335,9 @@ test('render uses config.maxWidth as fallback when terminal width is unavailable
   ctx.usageData = {
     fiveHour: 42,
     sevenDay: null,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -387,7 +393,9 @@ test('render does not strand a bare 5h continuation line in compact mode', () =>
     planName: 'Pro',
     fiveHour: 30,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 28 * 60 * 60 * 1000),
   };
 
@@ -492,7 +500,9 @@ test('render keeps default merge-group elements as separate lines when a narrow 
   ctx.usageData = {
     fiveHour: 62,
     sevenDay: null,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -513,7 +523,9 @@ test('render respects terminal width with Chinese labels enabled', () => {
     planName: 'Pro',
     fiveHour: 42,
     sevenDay: 12,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 90 * 60000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60000),
   };
 

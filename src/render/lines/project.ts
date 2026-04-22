@@ -97,7 +97,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
   }
 
   if (display?.showDuration !== false && ctx.sessionDuration) {
-    parts.push(label(`⏱️  ${ctx.sessionDuration}`, colors));
+    parts.push(label(`⏱️ ${ctx.sessionDuration}`, colors));
   }
 
   const costEstimate = renderCostEstimate(ctx);
@@ -121,7 +121,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     return null;
   }
 
-  return parts.join(' \u2502 ');
+  return parts.join(' | ');
 }
 
 function formatAheadCount(

@@ -53,7 +53,8 @@ function baseContext() {
       pathLevels: 1,
       elementOrder: ['project', 'context', 'usage', 'promptCache', 'memory', 'environment', 'tools', 'agents', 'todos'],
       gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false, branchOverflow: 'truncate', pushWarningThreshold: 0, pushCriticalThreshold: 0 },
-      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showCost: false, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showResetLabel: true, showTools: true, showAgents: true, showTodos: true, showSessionTokens: false, showSessionName: false, showClaudeCodeVersion: false, showMemoryUsage: false, showPromptCache: false, promptCacheTtlSeconds: 300, showOutputStyle: false, mergeGroups: [['context', 'usage']], autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0, customLine: '' },
+      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showCost: false, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showResetLabel: true, usageCompact: false, showTools: true, showAgents: true, showTodos: true, showSessionName: false, showClaudeCodeVersion: false, showEffortLevel: false, showMemoryUsage: false, showPromptCache: false, promptCacheTtlSeconds: 300, showSessionTokens: false, showOutputStyle: false, mergeGroups: [['context', 'usage']], autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0, externalUsagePath: '', externalUsageFreshnessMs: 300000, modelFormat: 'full', modelOverride: '', customLine: '', timeFormat: 'relative' },
+      usage: { fiveHourRefreshSec: 30, sevenDayRefreshSec: 180 },
       colors: {
         context: 'green',
         usage: 'brightBlue',
@@ -561,7 +562,9 @@ test('label color overrides apply across shared secondary text surfaces', () => 
   ctx.usageData = {
     fiveHour: 25,
     sevenDay: null,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   ctx.memoryUsage = {
@@ -728,7 +731,7 @@ test('render expanded layout includes speed and duration on the project line', a
 
     assert.ok(projectLine, 'expected an expanded project line');
     assert.ok(projectLine.includes('out: 1000.0 tok/s'), 'should include deterministic speed');
-    assert.ok(projectLine.includes('⏱️  12m 34s'), 'should include session duration');
+    assert.ok(projectLine.includes('⏱️ 12m 34s'), 'should include session duration');
   });
 });
 
@@ -793,7 +796,7 @@ test('renderProjectLine can give git its own segment for wrapping', () => {
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   ctx.config.gitStatus.branchOverflow = 'wrap';
   const line = stripAnsi(renderProjectLine(ctx) ?? '');
-  assert.ok(line.includes('my-project │ git:(feature/add-auth)'), 'git should render as a separate segment');
+  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
 });
 
 test('renderToolsLine renders running and completed tools', () => {
@@ -1049,7 +1052,9 @@ test('renderSessionLine does not add a synthetic subscriber label from usageData
     planName: 'Max',
     fiveHour: 23,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderSessionLine(ctx);
@@ -1063,7 +1068,9 @@ test('renderSessionLine does not guess API auth from environment variables alone
     planName: 'Max',
     fiveHour: 23,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const savedApiKey = process.env.ANTHROPIC_API_KEY;
@@ -1088,7 +1095,9 @@ test('renderProjectLine does not guess API auth from environment variables alone
     planName: 'Pro',
     fiveHour: 10,
     sevenDay: 20,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const savedApiKey = process.env.ANTHROPIC_API_KEY;
@@ -1124,7 +1133,9 @@ test('renderUsageLine translates labels when Chinese is enabled', () => {
     planName: 'Pro',
     fiveHour: 25,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
   };
 
@@ -1147,7 +1158,9 @@ test('renderSessionLine shows Bedrock label and hides usage for bedrock model id
       planName: 'Max',
       fiveHour: 23,
       sevenDay: 45,
+      fiveHourStartAt: null,
       fiveHourResetAt: null,
+      sevenDayStartAt: null,
       sevenDayResetAt: null,
     };
     const line = renderSessionLine(ctx);
@@ -1166,7 +1179,9 @@ test('renderSessionLine displays usage percentages (7d hidden when low)', () => 
     planName: 'Pro',
     fiveHour: 6,
     sevenDay: 13,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderSessionLine(ctx);
@@ -1182,7 +1197,9 @@ test('renderSessionLine shows 7d when approaching limit (>=80%)', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderSessionLine(ctx);
@@ -1200,7 +1217,9 @@ test('renderSessionLine shows 7d reset countdown in text-only mode', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: resetTime,
   };
 
@@ -1216,7 +1235,9 @@ test('renderSessionLine respects sevenDayThreshold override', () => {
     planName: 'Pro',
     fiveHour: 10,
     sevenDay: 5,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -1231,7 +1252,9 @@ test('renderSessionLine shows weekly-only usage without a ghost 5h section', () 
     planName: 'Pro',
     fiveHour: null,
     sevenDay: 13,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -1248,7 +1271,9 @@ test('renderSessionLine shows 5hr reset countdown', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 20,
+    fiveHourStartAt: null,
     fiveHourResetAt: resetTime,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderSessionLine(ctx);
@@ -1264,7 +1289,9 @@ test('renderUsageLine shows reset countdown in days when >= 24 hours', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 20,
+    fiveHourStartAt: null,
     fiveHourResetAt: resetTime,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderUsageLine(ctx);
@@ -1283,7 +1310,9 @@ test('renderUsageLine shows 7d reset countdown in text-only mode', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: resetTime,
   };
 
@@ -1303,7 +1332,9 @@ test('renderUsageLine can hide reset label in text-only mode', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: resetTime,
   };
 
@@ -1319,7 +1350,9 @@ test('renderUsageLine translates weekly label when Chinese is enabled', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + (28 * 60 * 60 * 1000)),
   };
 
@@ -1342,7 +1375,9 @@ test('renderUsageLine shows 7d reset countdown in bar mode when above threshold'
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: resetTime,
   };
 
@@ -1363,7 +1398,9 @@ test('renderUsageLine can hide reset label in bar mode', () => {
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: resetTime,
   };
 
@@ -1379,7 +1416,9 @@ test('renderUsageLine shows weekly-only usage without a ghost 5h section', () =>
     planName: 'Pro',
     fiveHour: null,
     sevenDay: 13,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -1398,7 +1437,9 @@ test('renderSessionLine displays limit reached warning', () => {
     planName: 'Pro',
     fiveHour: 100,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: resetTime,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderSessionLine(ctx);
@@ -1413,7 +1454,9 @@ test('renderUsageLine shows limit reset in days when >= 24 hours', () => {
     planName: 'Pro',
     fiveHour: 100,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: resetTime,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderUsageLine(ctx);
@@ -1430,7 +1473,9 @@ test('renderSessionLine displays -- for null usage values', () => {
     planName: 'Max',
     fiveHour: null,
     sevenDay: null,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const line = renderSessionLine(ctx);
@@ -1459,7 +1504,9 @@ test('renderSessionLine uses custom critical colors for limit-reached usage stat
     planName: 'Pro',
     fiveHour: 100,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 3600000),
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -1481,7 +1528,9 @@ test('renderUsageLine uses custom usage palette overrides', () => {
     planName: 'Pro',
     fiveHour: 25,
     sevenDay: 80,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
 
@@ -1499,7 +1548,9 @@ test('renderSessionLine hides usage when showUsage config is false (hybrid toggl
     planName: 'Pro',
     fiveHour: 25,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: null,
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   // Even with usageData present, setting showUsage to false should hide it
@@ -1767,7 +1818,9 @@ test('render expanded layout honors custom elementOrder including activity place
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
   ctx.memoryUsage = {
@@ -1820,7 +1873,9 @@ test('render expanded layout omits elements not present in elementOrder', () => 
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
   ctx.memoryUsage = {
@@ -1861,7 +1916,9 @@ test('render expanded layout combines default merge-group elements when adjacent
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
   ctx.config.elementOrder = ['usage', 'context'];
@@ -1871,7 +1928,7 @@ test('render expanded layout combines default merge-group elements when adjacent
   assert.equal(lines.length, 1, 'adjacent usage and context should share one expanded line');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].includes('│'), 'combined line should preserve the shared separator');
+  assert.ok(lines[0].includes(' | '), 'combined line should preserve the shared separator');
   const stripped = stripAnsi(lines[0]);
   assert.ok(stripped.includes('Usage 5h 30%'), `combined line should keep the default unpadded usage label: ${stripped}`);
   assert.ok(!stripped.includes('Usage  5h 30%'), `combined line should not pad the usage label: ${stripped}`);
@@ -1886,7 +1943,9 @@ test('render expanded layout keeps merge-group elements separate when they are n
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
   ctx.config.elementOrder = ['usage', 'project', 'context'];
@@ -1908,7 +1967,9 @@ test('render expanded layout keeps default merge-group elements separate when me
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
   ctx.config.display.mergeGroups = [];
@@ -1930,7 +1991,9 @@ test('render expanded layout combines custom merge groups in configured order', 
     planName: 'Team',
     fiveHour: 30,
     sevenDay: 10,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
   ctx.config.display.mergeGroups = [['project', 'usage', 'context']];
@@ -1942,7 +2005,7 @@ test('render expanded layout combines custom merge groups in configured order', 
   assert.ok(lines[0].includes('my-project'), 'combined line should include project');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].split('│').length - 1 >= 2, 'combined line should keep the merge separators');
+  assert.ok(lines[0].split(' | ').length - 1 >= 2, 'combined line should keep the merge separators');
 });
 
 test('render expanded layout aligns progress labels only after wrapping merged lines to separate lines', () => {
@@ -1952,7 +2015,9 @@ test('render expanded layout aligns progress labels only after wrapping merged l
     planName: 'Team',
     fiveHour: 45,
     sevenDay: 85,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 90 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000),
   };
   ctx.config.elementOrder = ['usage', 'context'];
@@ -2038,7 +2103,9 @@ test('renderUsageLine uses "resets in" preposition for default relative mode in 
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 20,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const plain = stripAnsi(renderUsageLine(ctx));
@@ -2053,7 +2120,9 @@ test('renderUsageLine uses "resets at" when timeFormat is "absolute" (bar mode)'
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 20,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const plain = stripAnsi(renderUsageLine(ctx));
@@ -2069,7 +2138,9 @@ test('renderUsageLine shows relative and absolute time when timeFormat is "both"
     planName: 'Pro',
     fiveHour: 45,
     sevenDay: 20,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000 + 30 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const plain = stripAnsi(renderUsageLine(ctx));
@@ -2085,7 +2156,9 @@ test('renderUsageLine limit-reached uses "resets in" for default relative mode',
     planName: 'Pro',
     fiveHour: 100,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const plain = stripAnsi(renderUsageLine(ctx));
@@ -2100,7 +2173,9 @@ test('renderUsageLine limit-reached uses "resets at" for absolute timeFormat', (
     planName: 'Pro',
     fiveHour: 100,
     sevenDay: 45,
+    fiveHourStartAt: null,
     fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
     sevenDayResetAt: null,
   };
   const plain = stripAnsi(renderUsageLine(ctx));

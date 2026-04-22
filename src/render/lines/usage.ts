@@ -1,4 +1,4 @@
-import type { RenderContext } from "../../types.js";
+import type { RenderContext, UsageWindowType } from "../../types.js";
 import { isLimitReached } from "../../types.js";
 import type { MessageKey } from "../../i18n/types.js";
 import { isBedrockModelId } from "../../stdin.js";
@@ -8,6 +8,7 @@ import { t } from "../../i18n/index.js";
 import { progressLabel } from "./label-align.js";
 import type { TimeFormatMode } from "../../config.js";
 import { formatResetTime } from "../format-reset-time.js";
+import { formatTokenCount } from "../../usage/glm/api.js";
 
 export function renderUsageLine(
   ctx: RenderContext,
@@ -91,6 +92,8 @@ export function renderUsageLine(
       showResetLabel,
       forceLabel: true,
       alignLabels,
+      windowType: ctx.usageData.sevenDayWindowType,
+      tokenCount: ctx.usageData.sevenDayTokens,
     });
     return `${usageLabel} ${weeklyOnlyPart}`;
   }
@@ -104,6 +107,7 @@ export function renderUsageLine(
     barWidth,
     timeFormat,
     showResetLabel,
+    windowType: ctx.usageData.fiveHourWindowType,
   });
 
   if (sevenDay !== null && sevenDay >= sevenDayThreshold) {
@@ -119,6 +123,8 @@ export function renderUsageLine(
       showResetLabel,
       forceLabel: true,
       alignLabels,
+      windowType: ctx.usageData.sevenDayWindowType,
+      tokenCount: ctx.usageData.sevenDayTokens,
     });
     return `${usageLabel} ${fiveHourPart} | ${sevenDayPart}`;
   }
@@ -164,6 +170,8 @@ function formatUsageWindowPart({
   showResetLabel,
   forceLabel = false,
   alignLabels = false,
+  windowType,
+  tokenCount,
 }: {
   label: string;
   labelKey?: MessageKey;
@@ -176,6 +184,8 @@ function formatUsageWindowPart({
   showResetLabel: boolean;
   forceLabel?: boolean;
   alignLabels?: boolean;
+  windowType?: UsageWindowType;
+  tokenCount?: number;
 }): string {
   const usageDisplay = formatUsagePercent(percent, colors);
   const reset = formatResetTime(resetAt, timeFormat);
@@ -184,20 +194,47 @@ function formatUsageWindowPart({
     : label(windowLabel, colors);
   const resetsKey = timeFormat === 'absolute' ? "format.resets" : "format.resetsIn";
 
-  const resetSuffix = reset
-    ? showResetLabel
-      ? `(${t(resetsKey)} ${reset})`
-      : `(${reset})`
-    : "";
+  const isSemanticWindow = windowType === 'rolling' || windowType === 'cycle';
 
+  // Build suffix for semantic (rolling/cycle) windows
+  let suffix = '';
+  if (windowType === 'cycle' && tokenCount != null && tokenCount > 0) {
+    // 7d with tokens: "138M, 5d 3h" (token count + remaining time)
+    suffix = reset ? ` (${formatTokenCount(tokenCount)}, ${reset})` : ` (${formatTokenCount(tokenCount)})`;
+  } else if (windowType === 'cycle' && resetAt != null) {
+    // 5h cycle: remaining time "3h 30m"
+    suffix = reset ? ` (${reset})` : '';
+  } else if (windowType === 'cycle') {
+    suffix = ` (${styledLabel})`;
+  } else if (windowType === 'rolling') {
+    suffix = ` (${styledLabel})`;
+  }
+
+  // For fixed windows (Anthropic), show reset time
+  if (!isSemanticWindow) {
+    const resetSuffix = reset
+      ? showResetLabel
+        ? `(${t(resetsKey)} ${reset})`
+        : `(${reset})`
+      : "";
+
+    if (usageBarEnabled) {
+      const body = resetSuffix
+        ? `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay} ${resetSuffix}`
+        : `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}`;
+      return forceLabel ? `${styledLabel} ${body}` : body;
+    }
+
+    return resetSuffix
+      ? `${styledLabel} ${usageDisplay} ${resetSuffix}`
+      : `${styledLabel} ${usageDisplay}`;
+  }
+
+  // Rolling/cycle: show suffix with token count
   if (usageBarEnabled) {
-    const body = resetSuffix
-      ? `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay} ${resetSuffix}`
-      : `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}`;
+    const body = `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}${suffix}`;
     return forceLabel ? `${styledLabel} ${body}` : body;
   }
 
-  return resetSuffix
-    ? `${styledLabel} ${usageDisplay} ${resetSuffix}`
-    : `${styledLabel} ${usageDisplay}`;
+  return `${styledLabel} ${usageDisplay}${suffix}`;
 }

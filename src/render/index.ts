@@ -194,7 +194,7 @@ function splitLineBySeparators(line: string): { segments: string[]; separators: 
 
     const separator = line.startsWith(' | ', i)
       ? ' | '
-      : (line.startsWith(' │ ', i) ? ' │ ' : null);
+      : (line.startsWith(' | ', i) ? ' | ' : null);
 
     if (separator) {
       segments.push(line.slice(currentStart, i));
@@ -428,7 +428,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
           );
 
         if (renderedGroupLines.length > 1) {
-          const combinedLine = renderedGroupLines.map(({ line }) => line).join(' │ ');
+          const combinedLine = renderedGroupLines.map(({ line }) => line).join(' | ');
           const widthIsReal = terminalWidth && terminalWidth !== UNKNOWN_TERMINAL_WIDTH;
           const canCombine = !widthIsReal || visualLength(combinedLine) <= terminalWidth;
 
