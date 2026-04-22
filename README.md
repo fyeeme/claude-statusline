@@ -212,6 +212,15 @@ The 7-day percentage appears when above the `display.sevenDayThreshold` (default
 Context █████░░░░░ 45% │ Usage ██░░░░░░░░ 25% (1h 30m / 5h) | ██████████ 85% (2d / 7d)
 ```
 
+```gml
+新格式预览：
+Usage ██░░░░ 25% (1h 30m) | ████████ 85% (138M /04-27)
+Usage ██░░░░ 25% (3h 30m) | ████████ 85% (138M, 5d)
+
+对比旧格式：
+Usage ██░░░░ 25% (5h, resetsIn 3h 30m) | ████████ 85% (138M / 7d, resetsIn 5d)
+```
+
 To disable, set `display.showUsage` to `false`.
 
 **Requirements:**
