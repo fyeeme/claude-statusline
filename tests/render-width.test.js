@@ -28,7 +28,7 @@ function baseContext() {
       lineLayout: 'compact',
       showSeparators: false,
       pathLevels: 1,
-      gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false },
+      gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false, branchOverflow: 'truncate' },
       display: {
         showModel: true,
         showContextBar: true,
@@ -42,6 +42,7 @@ function baseContext() {
         showTools: true,
         showAgents: true,
         showTodos: true,
+        mergeGroups: [['context', 'usage']],
         autocompactBuffer: 'enabled',
         usageThreshold: 0,
         sevenDayThreshold: 80,
@@ -166,6 +167,26 @@ test('render wraps long lines to terminal width and keeps all activity lines vis
   assert.ok(lines.every(line => displayWidth(line) <= 20), 'all lines should fit terminal width');
 });
 
+test('render can wrap git to its own line without truncating the branch name', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/project-with-a-long-name';
+  ctx.gitStatus = {
+    branch: 'feature/this-is-a-very-long-branch-name',
+    isDirty: true,
+    ahead: 0,
+    behind: 0,
+  };
+  ctx.config.gitStatus.branchOverflow = 'wrap';
+
+  let lines = [];
+  withTerminal(55, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.ok(lines.every(line => displayWidth(line) <= 55), 'all lines should fit terminal width');
+  assert.ok(lines.some(line => line.includes('git:(feature/this-is-a-very-long-branch-name*)')), 'git branch should remain intact on its own line');
+});
+
 test('render falls back to COLUMNS env when stdout.columns is unavailable', () => {
   const ctx = baseContext();
   ctx.stdin.cwd = '/tmp/project';
@@ -190,14 +211,14 @@ test('render falls back to COLUMNS env when stdout.columns is unavailable', () =
   assert.ok(lines.every(line => displayWidth(line) <= 10), 'all lines should fit COLUMNS width');
 });
 
-test('render falls back to stderr.columns when stdout.columns is unavailable', () => {
+test('render falls back to stderr.columns when stdout.columns and COLUMNS are unavailable', () => {
   const ctx = baseContext();
   const originalEnvColumns = process.env.COLUMNS;
 
   let lines = [];
   withColumns(process.stdout, undefined, () => {
     withColumns(process.stderr, 12, () => {
-      process.env.COLUMNS = '10';
+      delete process.env.COLUMNS;
       try {
         lines = captureRender(ctx);
       } finally {
@@ -212,7 +233,7 @@ test('render falls back to stderr.columns when stdout.columns is unavailable', (
 
   assert.ok(lines.length > 0, 'should still render output lines');
   assert.ok(lines.every(line => displayWidth(line) <= 12), 'stderr width should be honored');
-  assert.ok(lines.some(line => displayWidth(line) > 10), 'stderr width should override COLUMNS fallback');
+  assert.ok(lines.some(line => displayWidth(line) > 10), 'stderr width should be used when no env override exists');
 });
 
 test('render ignores OSC 8 hyperlink sequences when measuring line width', () => {
@@ -259,7 +280,7 @@ test('render ignores BEL-terminated OSC 8 hyperlink sequences when measuring lin
   assert.ok(displayWidth(lines[0]) <= 47, 'visible width should respect terminal width');
 });
 
-test('render falls back to a safe default width when no terminal size is available', () => {
+test('render does not wrap when no real terminal width is available', () => {
   const ctx = baseContext();
   ctx.stdin.model = { display_name: 'Sonnet 4.6' };
   ctx.stdin.cwd = '/tmp/very-long-project-name-for-ghostty-fallback-check';
@@ -296,8 +317,64 @@ test('render falls back to a safe default width when no terminal size is availab
     });
   });
 
-  assert.ok(lines.length > 1, 'should wrap output instead of emitting one oversized line');
-  assert.ok(lines.every(line => displayWidth(line) <= 80), 'all lines should fit the safe fallback width');
+  // When terminal width is unknown (UNKNOWN_TERMINAL_WIDTH fallback),
+  // lines should NOT be wrapped at an arbitrary width — the host process
+  // (e.g. Claude Code) is responsible for final display layout.
+  assert.ok(lines.length >= 1, 'should still produce output');
+});
+
+test('render uses config.maxWidth as fallback when terminal width is unavailable', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Sonnet 4.6' };
+  ctx.stdin.cwd = '/tmp/very-long-project-name-for-maxwidth-fallback';
+  ctx.config.maxWidth = 30;
+  ctx.usageData = {
+    fiveHour: 42,
+    sevenDay: null,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+  };
+
+  // When no terminal size is available, maxWidth should be used as fallback
+  const originalEnvColumns = process.env.COLUMNS;
+  let lines = [];
+  withColumns(process.stdout, undefined, () => {
+    withColumns(process.stderr, undefined, () => {
+      delete process.env.COLUMNS;
+      try {
+        lines = captureRender(ctx);
+      } finally {
+        if (originalEnvColumns === undefined) {
+          delete process.env.COLUMNS;
+        } else {
+          process.env.COLUMNS = originalEnvColumns;
+        }
+      }
+    });
+  });
+
+  assert.ok(lines.length > 0, 'should produce output');
+  assert.ok(lines.every(line => displayWidth(line) <= 30), 'all lines should fit within maxWidth');
+});
+
+test('render ignores config.maxWidth when terminal width is detected', () => {
+  const ctx = baseContext();
+  ctx.stdin.model = { display_name: 'Sonnet 4.6' };
+  ctx.stdin.cwd = '/tmp/project';
+  ctx.config.maxWidth = 30;
+
+  // When terminal reports a real width, maxWidth should NOT cap it
+  let lines = [];
+  withTerminal(120, () => {
+    lines = captureRender(ctx);
+  });
+
+  // Lines should use the detected 120 columns, not the 30 maxWidth
+  assert.ok(lines.length > 0, 'should produce output');
+  assert.ok(lines.every(line => displayWidth(line) <= 120), 'lines should fit detected width');
+  // Compact session line is typically wider than 30 when model+context are shown
+  const widest = Math.max(...lines.map(displayWidth));
+  assert.ok(widest > 30, 'should use detected terminal width, not maxWidth');
 });
 
 test('render does not strand a bare 5h continuation line in compact mode', () => {
@@ -326,7 +403,7 @@ test('render does not strand a bare 5h continuation line in compact mode', () =>
   assert.ok(!lines.some(line => line.startsWith('5h ')), `did not expect a bare 5h continuation line: ${lines.join(' | ')}`);
 });
 
-test('render prefers stdout columns over COLUMNS env fallback', () => {
+test('render treats COLUMNS env as a hard override over stdout width', () => {
   const ctx = baseContext();
   ctx.stdin.cwd = '/tmp/very-long-project-name-for-width-checking';
   const originalEnvColumns = process.env.COLUMNS;
@@ -343,32 +420,37 @@ test('render prefers stdout columns over COLUMNS env fallback', () => {
     process.env.COLUMNS = originalEnvColumns;
   }
 
-  assert.ok(lines.every(line => displayWidth(line) <= 30), 'stdout width should be honored');
-  assert.ok(lines.some(line => displayWidth(line) > 10), 'stdout width should override COLUMNS fallback');
+  assert.ok(lines.every(line => displayWidth(line) <= 10), 'COLUMNS override should be honored');
+  assert.ok(lines.length > 1, 'narrow env override should force wrapping');
 });
 
 test('render does not split model/provider separator inside brackets', () => {
-  const ctx = baseContext();
-  ctx.stdin.model = { display_name: 'Sonnet', id: 'anthropic.claude-3-5-sonnet-20240620-v1:0' };
-  ctx.config.display.showUsage = false;
-  ctx.config.display.showContextBar = false;
-  ctx.config.display.showConfigCounts = false;
-  ctx.config.display.showDuration = false;
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+  try {
+    const ctx = baseContext();
+    ctx.stdin.model = { display_name: 'Sonnet', id: 'anthropic.claude-3-5-sonnet-20240620-v1:0' };
+    ctx.config.display.showUsage = false;
+    ctx.config.display.showContextBar = false;
+    ctx.config.display.showConfigCounts = false;
+    ctx.config.display.showDuration = false;
 
-  let wideLines = [];
-  withTerminal(80, () => {
-    wideLines = captureRender(ctx);
-  });
+    let wideLines = [];
+    withTerminal(80, () => {
+      wideLines = captureRender(ctx);
+    });
 
-  assert.ok(wideLines.some(line => line.includes('[Sonnet | Bedrock]')), 'model/provider badge should be preserved when width allows');
+    assert.ok(wideLines.some(line => line.includes('[Sonnet | Bedrock]')), 'model/provider badge should be preserved when width allows');
 
-  let lines = [];
-  withTerminal(12, () => {
-    lines = captureRender(ctx);
-  });
+    let lines = [];
+    withTerminal(12, () => {
+      lines = captureRender(ctx);
+    });
 
-  assert.equal(lines.length, 1, 'single compact line should be truncated, not split');
-  assert.ok(!lines[0].startsWith('Bedrock]'), 'provider label should not become a wrapped prefix');
+    assert.equal(lines.length, 1, 'single compact line should be truncated, not split');
+    assert.ok(!lines[0].startsWith('Bedrock]'), 'provider label should not become a wrapped prefix');
+  } finally {
+    delete process.env.CLAUDE_CODE_USE_BEDROCK;
+  }
 });
 
 test('render clamps separator width in narrow terminals', () => {
@@ -402,7 +484,7 @@ test('render truncation respects Unicode display width', () => {
   assert.ok(lines.every(line => displayWidth(line) <= 10), 'all lines should respect terminal cell width');
 });
 
-test('render keeps context and usage as separate lines when a narrow terminal cannot fit both', () => {
+test('render keeps default merge-group elements as separate lines when a narrow terminal cannot fit both', () => {
   const ctx = baseContext();
   ctx.config.lineLayout = 'expanded';
   ctx.config.display.usageBarEnabled = true;

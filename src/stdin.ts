@@ -1,9 +1,6 @@
-import type { StdinData } from './types.js';
+import type { StdinData, UsageData } from './types.js';
 import type { ModelFormatMode } from './config.js';
 import { AUTOCOMPACT_BUFFER_PERCENT } from './constants.js';
-
-// Re-export for backward compatibility — canonical location is usage/claude/
-export { getUsageFromStdin } from './usage/claude/index.js';
 
 type StdinStream = Pick<NodeJS.ReadStream, 'setEncoding' | 'on' | 'off' | 'pause'> & {
   isTTY?: boolean;
@@ -146,10 +143,16 @@ export function getTotalTokens(stdin: StdinData): number {
 /**
  * Get native percentage from Claude Code v2.1.6+ if available.
  * Returns null if not available or invalid, triggering fallback to manual calculation.
+ *
+ * A value of 0 is treated as "not yet populated": on a fresh session Claude Code
+ * may emit used_percentage=0 before the first API response arrives, while
+ * current_usage already contains the real initial-context tokens (system prompt,
+ * tools, memory files, etc.).  Falling through to the token-based calculation
+ * ensures those tokens are reflected in the context bar from the very first tick.
  */
 function getNativePercent(stdin: StdinData): number | null {
   const nativePercent = stdin.context_window?.used_percentage;
-  if (typeof nativePercent === 'number' && !Number.isNaN(nativePercent)) {
+  if (typeof nativePercent === 'number' && !Number.isNaN(nativePercent) && nativePercent > 0) {
     return Math.min(100, Math.max(0, Math.round(nativePercent)));
   }
   return null;
@@ -199,6 +202,13 @@ export function getBufferedPercent(stdin: StdinData): number {
   return Math.min(100, Math.round(((totalTokens + buffer) / size) * 100));
 }
 
+// Enterprise plan alias → human-readable display name
+const ENTERPRISE_ALIAS_LABELS: Record<string, string> = {
+  opusplan: 'Claude Opus',
+  sonnetplan: 'Claude Sonnet',
+  haikuplan: 'Claude Haiku',
+};
+
 export function getModelName(stdin: StdinData): string {
   const displayName = stdin.model?.display_name?.trim();
   if (displayName) {
@@ -208,6 +218,12 @@ export function getModelName(stdin: StdinData): string {
   const modelId = stdin.model?.id?.trim();
   if (!modelId) {
     return 'Unknown';
+  }
+
+  // Resolve enterprise plan aliases to readable labels
+  const enterpriseLabel = ENTERPRISE_ALIAS_LABELS[modelId.toLowerCase()];
+  if (enterpriseLabel) {
+    return enterpriseLabel;
   }
 
   const normalizedBedrockLabel = normalizeBedrockModelLabel(modelId);
@@ -222,11 +238,72 @@ export function isBedrockModelId(modelId?: string): boolean {
   return normalized.includes('anthropic.claude-');
 }
 
+// Vertex AI model IDs use '@' as version separator (e.g. claude-3-5-sonnet@20241022)
+export function isVertexModelId(modelId?: string): boolean {
+  if (!modelId) {
+    return false;
+  }
+  return modelId.includes('@');
+}
+
+const ENTERPRISE_MODEL_IDS = new Set(['opusplan', 'sonnetplan', 'haikuplan']);
+
+export function isEnterpriseModelId(modelId?: string): boolean {
+  if (!modelId) {
+    return false;
+  }
+  return ENTERPRISE_MODEL_IDS.has(modelId.toLowerCase());
+}
+
 export function getProviderLabel(stdin: StdinData): string | null {
-  if (isBedrockModelId(stdin.model?.id)) {
+  if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') {
     return 'Bedrock';
   }
+  if (process.env.CLAUDE_CODE_USE_VERTEX === '1') {
+    return 'Vertex';
+  }
+  if (isEnterpriseModelId(stdin.model?.id)) {
+    return 'Enterprise';
+  }
   return null;
+}
+
+function parseRateLimitPercent(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.round(Math.min(100, Math.max(0, value)));
+}
+
+function parseRateLimitResetAt(value: number | null | undefined): Date | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return new Date(value * 1000);
+}
+
+export function getUsageFromStdin(stdin: StdinData): UsageData | null {
+  const rateLimits = stdin.rate_limits;
+  if (!rateLimits) {
+    return null;
+  }
+
+  const fiveHour = parseRateLimitPercent(rateLimits.five_hour?.used_percentage);
+  const sevenDay = parseRateLimitPercent(rateLimits.seven_day?.used_percentage);
+  if (fiveHour === null && sevenDay === null) {
+    return null;
+  }
+
+  return {
+    fiveHour,
+    sevenDay,
+    fiveHourStartAt: null,
+    fiveHourResetAt: parseRateLimitResetAt(rateLimits.five_hour?.resets_at),
+    sevenDayStartAt: null,
+    sevenDayResetAt: parseRateLimitResetAt(rateLimits.seven_day?.resets_at),
+  };
 }
 
 /**

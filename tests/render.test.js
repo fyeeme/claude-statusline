@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { render } from '../dist/render/index.js';
 import { renderSessionLine } from '../dist/render/session-line.js';
 import { renderProjectLine, renderGitFilesLine } from '../dist/render/lines/project.js';
+import { renderPromptCacheLine } from '../dist/render/lines/prompt-cache.js';
 import { renderToolsLine } from '../dist/render/tools-line.js';
 import { renderAgentsLine } from '../dist/render/agents-line.js';
 import { renderTodosLine } from '../dist/render/todos-line.js';
@@ -19,7 +20,9 @@ import { setLanguage } from '../dist/i18n/index.js';
 
 function stripAnsi(str) {
   // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1b\[[0-9;]*m/g, '');
+  return str
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
 }
 
 function baseContext() {
@@ -48,9 +51,9 @@ function baseContext() {
       lineLayout: 'compact',
       showSeparators: false,
       pathLevels: 1,
-      elementOrder: ['project', 'context', 'usage', 'memory', 'environment', 'tools', 'agents', 'todos'],
-      gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false, pushWarningThreshold: 0, pushCriticalThreshold: 0 },
-      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showCost: false, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showTools: true, showAgents: true, showTodos: true, showSessionTokens: false, showSessionName: false, showClaudeCodeVersion: false, showMemoryUsage: false, showOutputStyle: false, autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0, customLine: '' },
+      elementOrder: ['project', 'context', 'usage', 'promptCache', 'memory', 'environment', 'tools', 'agents', 'todos'],
+      gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false, branchOverflow: 'truncate', pushWarningThreshold: 0, pushCriticalThreshold: 0 },
+      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showCost: false, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showResetLabel: true, showTools: true, showAgents: true, showTodos: true, showSessionTokens: false, showSessionName: false, showClaudeCodeVersion: false, showMemoryUsage: false, showPromptCache: false, promptCacheTtlSeconds: 300, showOutputStyle: false, mergeGroups: [['context', 'usage']], autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0, customLine: '' },
       colors: {
         context: 'green',
         usage: 'brightBlue',
@@ -326,6 +329,16 @@ test('render expanded layout supports combined context display', () => {
   );
 });
 
+test('render expanded layout includes prompt cache as its own opt-in element', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.display.showPromptCache = true;
+  ctx.transcript.lastAssistantResponseAt = new Date(Date.now() - 45_000);
+
+  const lines = captureRenderLines(ctx);
+  assert.ok(lines.some(line => line.includes('Cache ⏱ 4m 15s')), `should render prompt cache line, got: ${lines.join(' | ')}`);
+});
+
 test('renderSessionLine omits project name when cwd is undefined', () => {
   const ctx = baseContext();
   ctx.stdin.cwd = undefined;
@@ -349,6 +362,23 @@ test('renderSessionLine includes Claude Code version when enabled', () => {
   ctx.claudeCodeVersion = '2.1.81';
   const line = stripAnsi(renderSessionLine(ctx));
   assert.ok(line.includes('CC v2.1.81'));
+});
+
+test('renderPromptCacheLine returns null when disabled or missing transcript data', () => {
+  const ctx = baseContext();
+  assert.equal(renderPromptCacheLine(ctx), null);
+
+  ctx.config.display.showPromptCache = true;
+  assert.equal(renderPromptCacheLine(ctx), null);
+});
+
+test('renderSessionLine includes prompt cache countdown when enabled', () => {
+  const ctx = baseContext();
+  ctx.config.display.showPromptCache = true;
+  ctx.transcript.lastAssistantResponseAt = new Date(Date.now() - 30_000);
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('Cache ⏱ 4m 30s'), `should include prompt cache countdown, got: ${line}`);
 });
 
 test('renderSessionLine hides session name by default', () => {
@@ -555,6 +585,7 @@ test('label color overrides apply across shared secondary text surfaces', () => 
   const expected = '\x1b[38;2;171;205;239m';
   assert.ok(renderIdentityLine(ctx).includes(`${expected}Context\x1b[0m`));
   assert.ok(renderUsageLine(ctx)?.includes(`${expected}Usage\x1b[0m`));
+  assert.ok(renderUsageLine(ctx, true)?.includes(`${expected}Usage  \x1b[0m`));
   assert.ok(renderEnvironmentLine(ctx)?.includes(`${expected}2 CLAUDE.md | 1 rules\x1b[0m`));
   assert.ok(renderMemoryLine({ ...ctx, config: { ...ctx.config, lineLayout: 'expanded', display: { ...ctx.config.display, showMemoryUsage: true } } })?.includes(`${expected}Approx RAM\x1b[0m`));
   assert.ok(renderToolsLine(ctx)?.includes(`${expected}: src/index.ts\x1b[0m`));
@@ -617,20 +648,25 @@ test('renderProjectLine falls back to an estimate when native cost is absent', (
 });
 
 test('renderProjectLine hides cost for provider-routed sessions', () => {
-  const ctx = baseContext();
-  ctx.stdin.cwd = '/tmp/my-project';
-  ctx.stdin.model = { id: 'anthropic.claude-sonnet-4-20250514-v1:0' };
-  ctx.config.display.showCost = true;
-  ctx.stdin.cost = { total_cost_usd: 0 };
-  ctx.transcript.sessionTokens = {
-    inputTokens: 100000,
-    cacheCreationTokens: 10000,
-    cacheReadTokens: 20000,
-    outputTokens: 50000,
-  };
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+  try {
+    const ctx = baseContext();
+    ctx.stdin.cwd = '/tmp/my-project';
+    ctx.stdin.model = { id: 'anthropic.claude-sonnet-4-20250514-v1:0' };
+    ctx.config.display.showCost = true;
+    ctx.stdin.cost = { total_cost_usd: 0 };
+    ctx.transcript.sessionTokens = {
+      inputTokens: 100000,
+      cacheCreationTokens: 10000,
+      cacheReadTokens: 20000,
+      outputTokens: 50000,
+    };
 
-  const line = stripAnsi(renderProjectLine(ctx));
-  assert.ok(!line.includes('Cost '), 'cost should stay hidden when billing is routed through the provider');
+    const line = stripAnsi(renderProjectLine(ctx));
+    assert.ok(!line.includes('Cost '), 'cost should stay hidden when billing is routed through the provider');
+  } finally {
+    delete process.env.CLAUDE_CODE_USE_BEDROCK;
+  }
 });
 
 test('renderProjectLine translates native cost label when Chinese is enabled', () => {
@@ -740,6 +776,24 @@ test('renderSessionLine displays branch with slashes', () => {
   const line = renderSessionLine(ctx);
   assert.ok(line.includes('git:('));
   assert.ok(line.includes('feature/add-auth'));
+});
+
+test('renderSessionLine can give git its own segment for wrapping', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
+  ctx.config.gitStatus.branchOverflow = 'wrap';
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
+});
+
+test('renderProjectLine can give git its own segment for wrapping', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
+  ctx.config.gitStatus.branchOverflow = 'wrap';
+  const line = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(line.includes('my-project │ git:(feature/add-auth)'), 'git should render as a separate segment');
 });
 
 test('renderToolsLine renders running and completed tools', () => {
@@ -1085,19 +1139,24 @@ test('renderUsageLine translates labels when Chinese is enabled', () => {
 });
 
 test('renderSessionLine shows Bedrock label and hides usage for bedrock model ids', () => {
-  const ctx = baseContext();
-  ctx.stdin.model = { display_name: 'Sonnet', id: 'anthropic.claude-3-5-sonnet-20240620-v1:0' };
-  ctx.usageData = {
-    planName: 'Max',
-    fiveHour: 23,
-    sevenDay: 45,
-    fiveHourResetAt: null,
-    sevenDayResetAt: null,
-  };
-  const line = renderSessionLine(ctx);
-  assert.ok(line.includes('Sonnet'), 'should include model name');
-  assert.ok(line.includes('Bedrock'), 'should include Bedrock label');
-  assert.ok(!line.includes('5h'), 'should hide usage display');
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+  try {
+    const ctx = baseContext();
+    ctx.stdin.model = { display_name: 'Sonnet', id: 'anthropic.claude-3-5-sonnet-20240620-v1:0' };
+    ctx.usageData = {
+      planName: 'Max',
+      fiveHour: 23,
+      sevenDay: 45,
+      fiveHourResetAt: null,
+      sevenDayResetAt: null,
+    };
+    const line = renderSessionLine(ctx);
+    assert.ok(line.includes('Sonnet'), 'should include model name');
+    assert.ok(line.includes('Bedrock'), 'should include Bedrock label');
+    assert.ok(!line.includes('5h'), 'should hide usage display');
+  } finally {
+    delete process.env.CLAUDE_CODE_USE_BEDROCK;
+  }
 });
 
 test('renderSessionLine displays usage percentages (7d hidden when low)', () => {
@@ -1234,6 +1293,25 @@ test('renderUsageLine shows 7d reset countdown in text-only mode', () => {
   assert.ok(line.includes('(resets in 1d 4h)'), `should include 7d reset countdown in text-only mode: ${line}`);
 });
 
+test('renderUsageLine can hide reset label in text-only mode', () => {
+  const ctx = baseContext();
+  const resetTime = new Date(Date.now() + (28 * 60 * 60 * 1000));
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.showResetLabel = false;
+  ctx.config.display.sevenDayThreshold = 80;
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 45,
+    sevenDay: 85,
+    fiveHourResetAt: null,
+    sevenDayResetAt: resetTime,
+  };
+
+  const line = stripAnsi(renderUsageLine(ctx));
+  assert.ok(line.includes('(1d 4h)'), `should include bare countdown when reset label is hidden: ${line}`);
+  assert.ok(!line.includes('resets in'), `should omit reset label when disabled: ${line}`);
+});
+
 test('renderUsageLine translates weekly label when Chinese is enabled', () => {
   const ctx = baseContext();
   ctx.config.display.sevenDayThreshold = 80;
@@ -1275,6 +1353,25 @@ test('renderUsageLine shows 7d reset countdown in bar mode when above threshold'
   assert.ok(line.includes('|'), `should render both usage windows above the threshold: ${line}`);
 });
 
+test('renderUsageLine can hide reset label in bar mode', () => {
+  const ctx = baseContext();
+  const resetTime = new Date(Date.now() + (28 * 60 * 60 * 1000));
+  ctx.config.display.usageBarEnabled = true;
+  ctx.config.display.showResetLabel = false;
+  ctx.config.display.sevenDayThreshold = 80;
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 45,
+    sevenDay: 85,
+    fiveHourResetAt: null,
+    sevenDayResetAt: resetTime,
+  };
+
+  const line = stripAnsi(renderUsageLine(ctx));
+  assert.ok(line.includes('(1d 4h)'), `should include bare countdown in bar mode: ${line}`);
+  assert.ok(!line.includes('resets in'), `should omit reset label in bar mode when disabled: ${line}`);
+});
+
 test('renderUsageLine shows weekly-only usage without a ghost 5h section', () => {
   const ctx = baseContext();
   ctx.config.display.sevenDayThreshold = 80;
@@ -1287,7 +1384,7 @@ test('renderUsageLine shows weekly-only usage without a ghost 5h section', () =>
   };
 
   const line = stripAnsi(renderUsageLine(ctx));
-  assert.ok(line.includes('Use'), `should render usage line: ${line}`);
+  assert.ok(line.includes('Usage'), `should render usage line: ${line}`);
   assert.ok(!line.includes('5h'), `should not render a ghost 5h section: ${line}`);
   assert.ok(line.includes('Weekly'), `should render the weekly window when it is the only usage value: ${line}`);
   assert.ok(line.includes('13%'), `should render the weekly percentage: ${line}`);
@@ -1323,7 +1420,7 @@ test('renderUsageLine shows limit reset in days when >= 24 hours', () => {
   assert.ok(line, 'should render usage line');
   const plain = stripAnsi(line);
   assert.ok(plain.includes('Limit reached'), 'should show limit reached');
-  assert.ok(/resets \d+d( \d+h)?/.test(plain), `expected day/hour reset format, got: ${plain}`);
+  assert.ok(/resets in \d+d( \d+h)?/.test(plain), `expected day/hour reset format, got: ${plain}`);
   assert.ok(!plain.includes('151h'), `should avoid raw hour format for long durations: ${plain}`);
 });
 
@@ -1390,9 +1487,9 @@ test('renderUsageLine uses custom usage palette overrides', () => {
 
   const line = withTerminal(120, () => renderUsageLine(ctx));
   assert.ok(line, 'should render usage line');
-  assert.ok(line.includes('\x1b[36m██'), `expected custom usage bar color, got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[36m███'), `expected custom usage bar color, got: ${JSON.stringify(line)}`);
   assert.ok(line.includes('\x1b[36m25%\x1b[0m'), `expected custom usage percentage color, got: ${JSON.stringify(line)}`);
-  assert.ok(line.includes('\x1b[35m█████'), `expected custom usage warning color, got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[35m████████'), `expected custom usage warning color, got: ${JSON.stringify(line)}`);
   assert.ok(line.includes('\x1b[35m80%\x1b[0m'), `expected custom usage warning percentage color, got: ${JSON.stringify(line)}`);
 });
 
@@ -1757,7 +1854,7 @@ test('render expanded layout omits elements not present in elementOrder', () => 
   assert.ok(!output.includes('todo-marker'), 'todos should be omitted when excluded');
 });
 
-test('render expanded layout combines usage and context when adjacent in elementOrder', () => {
+test('render expanded layout combines default merge-group elements when adjacent in elementOrder', () => {
   const ctx = baseContext();
   ctx.config.lineLayout = 'expanded';
   ctx.usageData = {
@@ -1774,10 +1871,14 @@ test('render expanded layout combines usage and context when adjacent in element
   assert.equal(lines.length, 1, 'adjacent usage and context should share one expanded line');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].includes('|'), 'combined line should preserve the shared separator');
+  assert.ok(lines[0].includes('│'), 'combined line should preserve the shared separator');
+  const stripped = stripAnsi(lines[0]);
+  assert.ok(stripped.includes('Usage 5h 30%'), `combined line should keep the default unpadded usage label: ${stripped}`);
+  assert.ok(!stripped.includes('Usage  5h 30%'), `combined line should not pad the usage label: ${stripped}`);
+  assert.ok(!stripped.includes('Weekly '), `combined line should not pad the weekly label: ${stripped}`);
 });
 
-test('render expanded layout keeps usage and context separate when not adjacent', () => {
+test('render expanded layout keeps merge-group elements separate when they are not adjacent', () => {
   const ctx = baseContext();
   ctx.config.lineLayout = 'expanded';
   ctx.stdin.cwd = '/tmp/my-project';
@@ -1798,6 +1899,75 @@ test('render expanded layout keeps usage and context separate when not adjacent'
   assert.ok(usageLine, 'usage should render on its own line');
   assert.ok(contextLine, 'context should render on its own line');
   assert.equal(combinedLine, undefined, 'usage and context should not combine when separated by another element');
+});
+
+test('render expanded layout keeps default merge-group elements separate when mergeGroups is empty', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 30,
+    sevenDay: 10,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
+  ctx.config.display.mergeGroups = [];
+  ctx.config.elementOrder = ['usage', 'context'];
+
+  const lines = withTerminal(120, () => captureRenderLines(ctx));
+
+  assert.equal(lines.length, 2, 'empty mergeGroups should disable expanded merged lines');
+  assert.ok(lines.some(line => line.includes('Usage')), 'usage should stay visible');
+  assert.ok(lines.some(line => line.includes('Context')), 'context should stay visible');
+  assert.ok(!lines.some(line => line.includes('Usage') && line.includes('Context')), 'no combined line should be rendered');
+});
+
+test('render expanded layout combines custom merge groups in configured order', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 30,
+    sevenDay: 10,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
+  ctx.config.display.mergeGroups = [['project', 'usage', 'context']];
+  ctx.config.elementOrder = ['project', 'usage', 'context'];
+
+  const lines = withTerminal(160, () => captureRenderLines(ctx));
+
+  assert.equal(lines.length, 1, 'custom merge groups should combine all adjacent configured elements');
+  assert.ok(lines[0].includes('my-project'), 'combined line should include project');
+  assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
+  assert.ok(lines[0].includes('Context'), 'combined line should include context');
+  assert.ok(lines[0].split('│').length - 1 >= 2, 'combined line should keep the merge separators');
+});
+
+test('render expanded layout aligns progress labels only after wrapping merged lines to separate lines', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 45,
+    sevenDay: 85,
+    fiveHourResetAt: new Date(Date.now() + 90 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000),
+  };
+  ctx.config.elementOrder = ['usage', 'context'];
+
+  const lines = withTerminal(24, () => captureRenderLines(ctx)).map(stripAnsi);
+  const usageLine = lines.find((line) => line.includes('Usage'));
+  const contextLine = lines.find((line) => line.includes('Context'));
+  const weeklyLine = lines.find((line) => line.includes('Weekly'));
+
+  assert.ok(usageLine, `narrow terminals should keep the usage line visible: ${lines.join(' | ')}`);
+  assert.ok(contextLine, `narrow terminals should keep the context line visible: ${lines.join(' | ')}`);
+  assert.ok(weeklyLine, `narrow terminals should keep the weekly segment visible: ${lines.join(' | ')}`);
+  assert.ok(usageLine.startsWith('Usage  '), `usage line should pad its label when stacked: ${usageLine}`);
+  assert.ok(weeklyLine.startsWith('Weekly '), `weekly label should pad when stacked: ${weeklyLine}`);
+  assert.ok(contextLine.startsWith('Context'), `context line should stay aligned with the padded usage label: ${contextLine}`);
 });
 
 test('render compact layout keeps activity lines even when elementOrder omits them', () => {
@@ -1855,4 +2025,86 @@ test('renderSessionLine includes compact session token summary when enabled', ()
 
   const line = stripAnsi(renderSessionLine(ctx));
   assert.ok(line.includes('tok: 2k (in: 2k, out: 250)'), 'should include compact token summary');
+});
+
+// ---------------------------------------------------------------------------
+// display.timeFormat — absolute and both modes
+// ---------------------------------------------------------------------------
+
+test('renderUsageLine uses "resets in" preposition for default relative mode in bar-mode', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = true;
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 45,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('resets in'), `should use "resets in" for relative mode, got: ${plain}`);
+});
+
+test('renderUsageLine uses "resets at" when timeFormat is "absolute" (bar mode)', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = true;
+  ctx.config.display.timeFormat = 'absolute';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 45,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('resets at'), `expected "resets at" in absolute bar mode, got: ${plain}`);
+  assert.ok(!plain.includes('resets in'), `should not say "resets in" for absolute mode, got: ${plain}`);
+});
+
+test('renderUsageLine shows relative and absolute time when timeFormat is "both"', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'both';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 45,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000 + 30 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+  const plain = stripAnsi(renderUsageLine(ctx));
+  // "both" produces "Xh Ym, at HH:MM" — must contain relative part and " at " from i18n
+  assert.match(plain, /\dh/, 'should contain relative duration hours');
+  assert.ok(plain.includes(' at '), `should contain absolute "at" prefix, got: ${plain}`);
+  assert.ok(plain.includes('resets in'), `should use "resets in" preposition for both mode, got: ${plain}`);
+});
+
+test('renderUsageLine limit-reached uses "resets in" for default relative mode', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 100,
+    sevenDay: 45,
+    fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('Limit reached'), 'should show limit reached');
+  assert.ok(plain.includes('resets in'), `should use "resets in" preposition for relative mode, got: ${plain}`);
+});
+
+test('renderUsageLine limit-reached uses "resets at" for absolute timeFormat', () => {
+  const ctx = baseContext();
+  ctx.config.display.timeFormat = 'absolute';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 100,
+    sevenDay: 45,
+    fiveHourResetAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('Limit reached'), 'should show limit reached');
+  assert.ok(plain.includes('resets at'), `should use "resets at" for absolute mode, got: ${plain}`);
+  assert.ok(!plain.includes('resets in'), `should not say "resets in" for absolute mode, got: ${plain}`);
 });

@@ -2,13 +2,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { getHudPluginDir } from './claude-config-dir.js';
-import { setFallbackWidth, UNKNOWN_TERMINAL_WIDTH } from './utils/terminal.js';
 import type { Language } from './i18n/types.js';
 
 export type LineLayoutType = 'compact' | 'expanded';
 
 export type AutocompactBufferMode = 'enabled' | 'disabled';
 export type ContextValueMode = 'percent' | 'tokens' | 'remaining' | 'both';
+export type GitBranchOverflowMode = 'truncate' | 'wrap';
 
 /**
  * Controls how the model name is displayed in the HUD badge.
@@ -18,7 +18,8 @@ export type ContextValueMode = 'percent' | 'tokens' | 'remaining' | 'both';
  *   short:   Strip context suffix AND "Claude " prefix (e.g. "Opus 4.6")
  */
 export type ModelFormatMode = 'full' | 'compact' | 'short';
-export type HudElement = 'project' | 'context' | 'usage' | 'memory' | 'environment' | 'tools' | 'agents' | 'todos';
+export type TimeFormatMode = 'relative' | 'absolute' | 'both';
+export type HudElement = 'project' | 'context' | 'usage' | 'promptCache' | 'memory' | 'environment' | 'tools' | 'agents' | 'todos';
 export type HudColorName =
   | 'dim'
   | 'red'
@@ -50,11 +51,16 @@ export const DEFAULT_ELEMENT_ORDER: HudElement[] = [
   'project',
   'context',
   'usage',
+  'promptCache',
   'memory',
   'environment',
   'tools',
   'agents',
   'todos',
+];
+
+export const DEFAULT_MERGE_GROUPS: HudElement[][] = [
+  ['context', 'usage'],
 ];
 
 const KNOWN_ELEMENTS = new Set<HudElement>(DEFAULT_ELEMENT_ORDER);
@@ -64,14 +70,14 @@ export interface HudConfig {
   lineLayout: LineLayoutType;
   showSeparators: boolean;
   pathLevels: 1 | 2 | 3;
-  /** Override terminal width fallback (default: 40). Ignored when a real terminal is detected. */
-  terminalWidth: number;
+  maxWidth: number | null;
   elementOrder: HudElement[];
   gitStatus: {
     enabled: boolean;
     showDirty: boolean;
     showAheadBehind: boolean;
     showFileStats: boolean;
+    branchOverflow: GitBranchOverflowMode;
     pushWarningThreshold: number;
     pushCriticalThreshold: number;
   };
@@ -87,28 +93,35 @@ export interface HudConfig {
     showTokenBreakdown: boolean;
     showUsage: boolean;
     usageBarEnabled: boolean;
+    showResetLabel: boolean;
+    usageCompact: boolean;
     showTools: boolean;
     showAgents: boolean;
     showTodos: boolean;
     showSessionName: boolean;
     showClaudeCodeVersion: boolean;
+    showEffortLevel: boolean;
     showMemoryUsage: boolean;
+    showPromptCache: boolean;
+    promptCacheTtlSeconds: number;
     showSessionTokens: boolean;
     showOutputStyle: boolean;
+    mergeGroups: HudElement[][];
     autocompactBuffer: AutocompactBufferMode;
     usageThreshold: number;
     sevenDayThreshold: number;
-    /** Show 5h and 7d reset times (deadlines) in the usage bar */
-    showUsageResetTime: boolean;
     environmentThreshold: number;
+    externalUsagePath: string;
+    externalUsageFreshnessMs: number;
     modelFormat: ModelFormatMode;
     modelOverride: string;
     customLine: string;
+    timeFormat: TimeFormatMode;
   };
   usage: {
-    /** Cache TTL for 5h usage data in seconds (default: 300 = 5 min) */
+    /** Cache TTL for 5h usage data in seconds (default: 30) */
     fiveHourRefreshSec: number;
-    /** Cache TTL for 7d usage data in seconds (default: 300 = 5 min) */
+    /** Cache TTL for 7d usage data in seconds (default: 180) */
     sevenDayRefreshSec: number;
   };
   colors: HudColorOverrides;
@@ -119,13 +132,14 @@ export const DEFAULT_CONFIG: HudConfig = {
   lineLayout: 'expanded',
   showSeparators: false,
   pathLevels: 1,
-  terminalWidth: UNKNOWN_TERMINAL_WIDTH,
+  maxWidth: null,
   elementOrder: [...DEFAULT_ELEMENT_ORDER],
   gitStatus: {
     enabled: true,
     showDirty: true,
     showAheadBehind: false,
     showFileStats: false,
+    branchOverflow: 'truncate',
     pushWarningThreshold: 0,
     pushCriticalThreshold: 0,
   },
@@ -141,22 +155,30 @@ export const DEFAULT_CONFIG: HudConfig = {
     showTokenBreakdown: true,
     showUsage: true,
     usageBarEnabled: true,
+    showResetLabel: true,
+    usageCompact: false,
     showTools: false,
     showAgents: false,
     showTodos: false,
     showSessionName: false,
     showClaudeCodeVersion: false,
+    showEffortLevel: false,
     showMemoryUsage: false,
+    showPromptCache: false,
+    promptCacheTtlSeconds: 300,
     showSessionTokens: false,
     showOutputStyle: false,
+    mergeGroups: DEFAULT_MERGE_GROUPS.map(group => [...group]),
     autocompactBuffer: 'enabled',
     usageThreshold: 0,
     sevenDayThreshold: 80,
-    showUsageResetTime: false,
     environmentThreshold: 0,
+    externalUsagePath: '',
+    externalUsageFreshnessMs: 300000,
     modelFormat: 'full',
     modelOverride: '',
     customLine: '',
+    timeFormat: 'relative',
   },
   usage: {
     fiveHourRefreshSec: 30,
@@ -194,6 +216,10 @@ function validateAutocompactBuffer(value: unknown): value is AutocompactBufferMo
   return value === 'enabled' || value === 'disabled';
 }
 
+function validateGitBranchOverflow(value: unknown): value is GitBranchOverflowMode {
+  return value === 'truncate' || value === 'wrap';
+}
+
 function validateContextValue(value: unknown): value is ContextValueMode {
   return value === 'percent' || value === 'tokens' || value === 'remaining' || value === 'both';
 }
@@ -204,6 +230,10 @@ function validateLanguage(value: unknown): value is Language {
 
 function validateModelFormat(value: unknown): value is ModelFormatMode {
   return value === 'full' || value === 'compact' || value === 'short';
+}
+
+function validateTimeFormat(value: unknown): value is TimeFormatMode {
+  return value === 'relative' || value === 'absolute' || value === 'both';
 }
 
 function validateColorName(value: unknown): value is HudColorName {
@@ -251,6 +281,55 @@ function validateElementOrder(value: unknown): HudElement[] {
   return elementOrder.length > 0 ? elementOrder : [...DEFAULT_ELEMENT_ORDER];
 }
 
+function validateMergeGroups(value: unknown): HudElement[][] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_MERGE_GROUPS.map(group => [...group]);
+  }
+
+  if (value.length === 0) {
+    return [];
+  }
+
+  const usedElements = new Set<HudElement>();
+  const mergeGroups: HudElement[][] = [];
+
+  for (const group of value) {
+    if (!Array.isArray(group)) {
+      continue;
+    }
+
+    const seenInGroup = new Set<HudElement>();
+    const normalizedGroup: HudElement[] = [];
+    const pendingElements: HudElement[] = [];
+
+    for (const item of group) {
+      if (typeof item !== 'string' || !KNOWN_ELEMENTS.has(item as HudElement)) {
+        continue;
+      }
+
+      const element = item as HudElement;
+      if (seenInGroup.has(element) || usedElements.has(element)) {
+        continue;
+      }
+
+      seenInGroup.add(element);
+      normalizedGroup.push(element);
+      pendingElements.push(element);
+    }
+
+    if (normalizedGroup.length >= 2) {
+      for (const element of pendingElements) {
+        usedElements.add(element);
+      }
+      mergeGroups.push(normalizedGroup);
+    }
+  }
+
+  return mergeGroups.length > 0
+    ? mergeGroups
+    : DEFAULT_MERGE_GROUPS.map(group => [...group]);
+}
+
 interface LegacyConfig {
   layout?: 'default' | 'separators' | Record<string, unknown>;
 }
@@ -293,6 +372,24 @@ function validateCountThreshold(value: unknown): number {
   return Math.max(0, Math.floor(value));
 }
 
+function validateDurationSeconds(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function validateOptionalPath(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function validateFreshnessMs(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_CONFIG.display.externalUsageFreshnessMs;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
 export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
   const migrated = migrateConfig(userConfig);
   const language = validateLanguage(migrated.language)
@@ -311,10 +408,10 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     ? migrated.pathLevels
     : DEFAULT_CONFIG.pathLevels;
 
-  const terminalWidth = typeof migrated.terminalWidth === 'number'
-    && Number.isFinite(migrated.terminalWidth) && migrated.terminalWidth > 0
-    ? Math.floor(migrated.terminalWidth)
-    : DEFAULT_CONFIG.terminalWidth;
+  const rawMaxWidth = (migrated as Record<string, unknown>).maxWidth;
+  const maxWidth = (typeof rawMaxWidth === 'number' && Number.isFinite(rawMaxWidth) && rawMaxWidth > 0)
+    ? Math.floor(rawMaxWidth)
+    : null;
 
   const elementOrder = validateElementOrder(migrated.elementOrder);
 
@@ -331,6 +428,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showFileStats: typeof migrated.gitStatus?.showFileStats === 'boolean'
       ? migrated.gitStatus.showFileStats
       : DEFAULT_CONFIG.gitStatus.showFileStats,
+    branchOverflow: validateGitBranchOverflow(migrated.gitStatus?.branchOverflow)
+      ? migrated.gitStatus.branchOverflow
+      : DEFAULT_CONFIG.gitStatus.branchOverflow,
     pushWarningThreshold: validateCountThreshold(migrated.gitStatus?.pushWarningThreshold),
     pushCriticalThreshold: validateCountThreshold(migrated.gitStatus?.pushCriticalThreshold),
   };
@@ -369,6 +469,12 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     usageBarEnabled: typeof migrated.display?.usageBarEnabled === 'boolean'
       ? migrated.display.usageBarEnabled
       : DEFAULT_CONFIG.display.usageBarEnabled,
+    showResetLabel: typeof migrated.display?.showResetLabel === 'boolean'
+      ? migrated.display.showResetLabel
+      : DEFAULT_CONFIG.display.showResetLabel,
+    usageCompact: typeof migrated.display?.usageCompact === 'boolean'
+      ? migrated.display.usageCompact
+      : DEFAULT_CONFIG.display.usageCompact,
     showTools: typeof migrated.display?.showTools === 'boolean'
       ? migrated.display.showTools
       : DEFAULT_CONFIG.display.showTools,
@@ -384,24 +490,34 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showClaudeCodeVersion: typeof migrated.display?.showClaudeCodeVersion === 'boolean'
       ? migrated.display.showClaudeCodeVersion
       : DEFAULT_CONFIG.display.showClaudeCodeVersion,
+    showEffortLevel: typeof migrated.display?.showEffortLevel === 'boolean'
+      ? migrated.display.showEffortLevel
+      : DEFAULT_CONFIG.display.showEffortLevel,
     showMemoryUsage: typeof migrated.display?.showMemoryUsage === 'boolean'
       ? migrated.display.showMemoryUsage
       : DEFAULT_CONFIG.display.showMemoryUsage,
+    showPromptCache: typeof migrated.display?.showPromptCache === 'boolean'
+      ? migrated.display.showPromptCache
+      : DEFAULT_CONFIG.display.showPromptCache,
+    promptCacheTtlSeconds: validateDurationSeconds(
+      migrated.display?.promptCacheTtlSeconds,
+      DEFAULT_CONFIG.display.promptCacheTtlSeconds,
+    ),
     showSessionTokens: typeof migrated.display?.showSessionTokens === 'boolean'
       ? migrated.display.showSessionTokens
       : DEFAULT_CONFIG.display.showSessionTokens,
     showOutputStyle: typeof migrated.display?.showOutputStyle === 'boolean'
       ? migrated.display.showOutputStyle
       : DEFAULT_CONFIG.display.showOutputStyle,
+    mergeGroups: validateMergeGroups(migrated.display?.mergeGroups),
     autocompactBuffer: validateAutocompactBuffer(migrated.display?.autocompactBuffer)
       ? migrated.display.autocompactBuffer
       : DEFAULT_CONFIG.display.autocompactBuffer,
     usageThreshold: validateThreshold(migrated.display?.usageThreshold, 100),
     sevenDayThreshold: validateThreshold(migrated.display?.sevenDayThreshold, 100),
-    showUsageResetTime: typeof migrated.display?.showUsageResetTime === 'boolean'
-      ? migrated.display.showUsageResetTime
-      : DEFAULT_CONFIG.display.showUsageResetTime,
     environmentThreshold: validateThreshold(migrated.display?.environmentThreshold, 100),
+    externalUsagePath: validateOptionalPath(migrated.display?.externalUsagePath),
+    externalUsageFreshnessMs: validateFreshnessMs(migrated.display?.externalUsageFreshnessMs),
     modelFormat: validateModelFormat(migrated.display?.modelFormat)
       ? migrated.display.modelFormat
       : DEFAULT_CONFIG.display.modelFormat,
@@ -411,6 +527,24 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     customLine: typeof migrated.display?.customLine === 'string'
       ? migrated.display.customLine.slice(0, 80)
       : DEFAULT_CONFIG.display.customLine,
+    timeFormat: validateTimeFormat(migrated.display?.timeFormat)
+      ? migrated.display.timeFormat
+      : DEFAULT_CONFIG.display.timeFormat,
+  };
+
+  const usage = {
+    fiveHourRefreshSec: validateDurationSeconds(
+      (migrated as Record<string, unknown>).usage
+        ? ((migrated as Record<string, unknown>).usage as Record<string, unknown>).fiveHourRefreshSec
+        : undefined,
+      DEFAULT_CONFIG.usage.fiveHourRefreshSec,
+    ),
+    sevenDayRefreshSec: validateDurationSeconds(
+      (migrated as Record<string, unknown>).usage
+        ? ((migrated as Record<string, unknown>).usage as Record<string, unknown>).sevenDayRefreshSec
+        : undefined,
+      DEFAULT_CONFIG.usage.sevenDayRefreshSec,
+    ),
   };
 
   const colors = {
@@ -449,18 +583,7 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
       : DEFAULT_CONFIG.colors.custom,
   };
 
-  const usage = {
-    fiveHourRefreshSec: typeof migrated.usage?.fiveHourRefreshSec === 'number'
-      && Number.isFinite(migrated.usage.fiveHourRefreshSec) && migrated.usage.fiveHourRefreshSec > 0
-      ? Math.floor(migrated.usage.fiveHourRefreshSec)
-      : DEFAULT_CONFIG.usage.fiveHourRefreshSec,
-    sevenDayRefreshSec: typeof migrated.usage?.sevenDayRefreshSec === 'number'
-      && Number.isFinite(migrated.usage.sevenDayRefreshSec) && migrated.usage.sevenDayRefreshSec > 0
-      ? Math.floor(migrated.usage.sevenDayRefreshSec)
-      : DEFAULT_CONFIG.usage.sevenDayRefreshSec,
-  };
-
-  return { language, lineLayout, showSeparators, pathLevels, terminalWidth, elementOrder, gitStatus, display, usage, colors };
+  return { language, lineLayout, showSeparators, pathLevels, maxWidth, elementOrder, gitStatus, display, usage, colors };
 }
 
 export async function loadConfig(): Promise<HudConfig> {
@@ -468,17 +591,13 @@ export async function loadConfig(): Promise<HudConfig> {
 
   try {
     if (!fs.existsSync(configPath)) {
-      setFallbackWidth(UNKNOWN_TERMINAL_WIDTH);
       return mergeConfig({});
     }
 
     const content = fs.readFileSync(configPath, 'utf-8');
     const userConfig = JSON.parse(content) as Partial<HudConfig>;
-    const merged = mergeConfig(userConfig);
-    setFallbackWidth(merged.terminalWidth);
-    return merged;
+    return mergeConfig(userConfig);
   } catch {
-    setFallbackWidth(UNKNOWN_TERMINAL_WIDTH);
     return mergeConfig({});
   }
 }

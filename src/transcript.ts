@@ -52,14 +52,18 @@ interface SerializedTranscriptData {
   todos: TodoItem[];
   sessionStart?: string;
   sessionName?: string;
+  lastAssistantResponseAt?: string;
   sessionTokens?: SessionTokenUsage;
 }
 
 interface TranscriptCacheFile {
+  version?: number;
   transcriptPath: string;
   transcriptState: TranscriptFileState;
   data: SerializedTranscriptData;
 }
+
+const TRANSCRIPT_CACHE_VERSION = 2;
 
 let createReadStreamImpl: typeof fs.createReadStream = fs.createReadStream;
 
@@ -120,6 +124,7 @@ function serializeTranscriptData(data: TranscriptData): SerializedTranscriptData
     todos: data.todos.map((todo) => ({ ...todo })),
     sessionStart: data.sessionStart?.toISOString(),
     sessionName: data.sessionName,
+    lastAssistantResponseAt: data.lastAssistantResponseAt?.toISOString(),
     sessionTokens: data.sessionTokens,
   };
 }
@@ -139,6 +144,7 @@ function deserializeTranscriptData(data: SerializedTranscriptData): TranscriptDa
     todos: data.todos.map((todo) => ({ ...todo })),
     sessionStart: data.sessionStart ? new Date(data.sessionStart) : undefined,
     sessionName: data.sessionName,
+    lastAssistantResponseAt: data.lastAssistantResponseAt ? new Date(data.lastAssistantResponseAt) : undefined,
     sessionTokens: normalizeSessionTokens(data.sessionTokens),
   };
 }
@@ -149,7 +155,10 @@ function readTranscriptCache(transcriptPath: string, state: TranscriptFileState)
     const raw = fs.readFileSync(cachePath, 'utf8');
     const parsed = JSON.parse(raw) as TranscriptCacheFile;
     if (
-      parsed.transcriptPath !== path.resolve(transcriptPath)
+      parsed.version !== TRANSCRIPT_CACHE_VERSION
+      || !parsed.data
+      || !parsed.transcriptPath
+      || parsed.transcriptPath !== path.resolve(transcriptPath)
       || parsed.transcriptState?.mtimeMs !== state.mtimeMs
       || parsed.transcriptState?.size !== state.size
     ) {
@@ -167,6 +176,7 @@ function writeTranscriptCache(transcriptPath: string, state: TranscriptFileState
     const cachePath = getTranscriptCachePath(transcriptPath, os.homedir());
     fs.mkdirSync(path.dirname(cachePath), { recursive: true });
     const payload: TranscriptCacheFile = {
+      version: TRANSCRIPT_CACHE_VERSION,
       transcriptPath: path.resolve(transcriptPath),
       transcriptState: state,
       data: serializeTranscriptData(data),
@@ -274,9 +284,14 @@ function processEntry(
   result: TranscriptData
 ): void {
   const timestamp = entry.timestamp ? new Date(entry.timestamp) : new Date();
+  const hasValidTimestamp = !Number.isNaN(timestamp.getTime());
 
-  if (!result.sessionStart && entry.timestamp) {
+  if (!result.sessionStart && entry.timestamp && hasValidTimestamp) {
     result.sessionStart = timestamp;
+  }
+
+  if (entry.type === 'assistant' && entry.timestamp && hasValidTimestamp) {
+    result.lastAssistantResponseAt = timestamp;
   }
 
   const content = entry.message?.content;
@@ -296,7 +311,7 @@ function processEntry(
         const input = block.input as Record<string, unknown>;
         const agentEntry: AgentEntry = {
           id: block.id,
-          type: (input?.subagent_type as string) ?? 'unknown',
+          type: (input?.subagent_type as string) ?? 'agent',
           model: (input?.model as string) ?? undefined,
           description: (input?.description as string) ?? undefined,
           status: 'running',

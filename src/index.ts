@@ -7,16 +7,22 @@ import { loadConfig } from "./config.js";
 import { parseExtraCmdArg, runExtraCmd } from "./extra-cmd.js";
 import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
-import { setLanguage, t } from "./i18n/index.js";
+import { resolveEffortLevel } from "./effort.js";
+import { applyContextWindowFallback } from "./context-cache.js";
+import { getUsageFromExternalSnapshot } from "./external-usage.js";
 import { getUsage } from "./usage/index.js";
 import type { UsageStrategyDeps } from "./usage/index.js";
+import { setLanguage, t } from "./i18n/index.js";
 import type { RenderContext } from "./types.js";
+
+export { getUsageFromExternalSnapshot } from "./external-usage.js";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
 export type MainDeps = {
   readStdin: typeof readStdin;
   getUsage: typeof getUsage;
+  getUsageFromExternalSnapshot: typeof getUsageFromExternalSnapshot;
   parseTranscript: typeof parseTranscript;
   countConfigs: typeof countConfigs;
   getGitStatus: typeof getGitStatus;
@@ -25,6 +31,7 @@ export type MainDeps = {
   runExtraCmd: typeof runExtraCmd;
   getClaudeCodeVersion: typeof getClaudeCodeVersion;
   getMemoryUsage: typeof getMemoryUsage;
+  applyContextWindowFallback: typeof applyContextWindowFallback;
   render: typeof render;
   now: () => number;
   log: (...args: unknown[]) => void;
@@ -34,6 +41,7 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
   const deps: MainDeps = {
     readStdin,
     getUsage,
+    getUsageFromExternalSnapshot,
     parseTranscript,
     countConfigs,
     getGitStatus,
@@ -42,6 +50,7 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
     runExtraCmd,
     getClaudeCodeVersion,
     getMemoryUsage,
+    applyContextWindowFallback,
     render,
     now: () => Date.now(),
     log: console.log,
@@ -66,6 +75,8 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
     const transcriptPath = stdin.transcript_path ?? "";
     const transcript = await deps.parseTranscript(transcriptPath);
 
+    deps.applyContextWindowFallback(stdin, {}, transcript.sessionName);
+
     const { claudeMdCount, rulesCount, mcpCount, hooksCount, outputStyle } =
       await deps.countConfigs(stdin.cwd);
 
@@ -79,6 +90,9 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
     let usageData: RenderContext["usageData"] = null;
     if (config.display.showUsage !== false) {
       usageData = await deps.getUsage(stdin);
+      if (!usageData) {
+        usageData = deps.getUsageFromExternalSnapshot(config, deps.now());
+      }
     }
 
     const extraCmd = deps.parseExtraCmdArg();
@@ -91,6 +105,9 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
     const claudeCodeVersion = config.display.showClaudeCodeVersion
       ? await deps.getClaudeCodeVersion()
       : undefined;
+    const effortInfo = config.display.showEffortLevel
+      ? resolveEffortLevel(stdin.effort)
+      : null;
     const memoryUsage =
       config.display.showMemoryUsage && config.lineLayout === "expanded"
         ? await deps.getMemoryUsage()
@@ -111,6 +128,8 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
       extraLabel,
       outputStyle,
       claudeCodeVersion,
+      effortLevel: effortInfo?.level,
+      effortSymbol: effortInfo?.symbol,
     };
 
     deps.render(ctx);

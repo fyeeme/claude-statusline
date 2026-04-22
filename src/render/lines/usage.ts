@@ -1,12 +1,18 @@
-import type { RenderContext, UsageWindowType } from "../../types.js";
+import type { RenderContext } from "../../types.js";
 import { isLimitReached } from "../../types.js";
-import { getProviderLabel } from "../../stdin.js";
+import type { MessageKey } from "../../i18n/types.js";
+import { isBedrockModelId } from "../../stdin.js";
 import { critical, label, getQuotaColor, quotaBar, RESET } from "../colors.js";
 import { getAdaptiveBarWidth } from "../../utils/terminal.js";
 import { t } from "../../i18n/index.js";
-import { formatTokenCount } from "../../usage/glm/api.js";
+import { progressLabel } from "./label-align.js";
+import type { TimeFormatMode } from "../../config.js";
+import { formatResetTime } from "../format-reset-time.js";
 
-export function renderUsageLine(ctx: RenderContext): string | null {
+export function renderUsageLine(
+  ctx: RenderContext,
+  alignLabels = false,
+): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
 
@@ -18,19 +24,30 @@ export function renderUsageLine(ctx: RenderContext): string | null {
     return null;
   }
 
-  if (getProviderLabel(ctx.stdin)) {
+  if (isBedrockModelId(ctx.stdin.model?.id)) {
     return null;
   }
 
-  const usageLabel = label(t("label.usage"), colors);
-  const isGlm = ctx.usageData.platform === 'glm';
+  const usageLabel = progressLabel("label.usage", colors, alignLabels);
+  const timeFormat: TimeFormatMode = display?.timeFormat ?? 'relative';
+  const showResetLabel = display?.showResetLabel ?? true;
+  const resetsKey = timeFormat === 'absolute' ? "format.resets" : "format.resetsIn";
+  const usageCompact = display?.usageCompact ?? false;
 
   if (isLimitReached(ctx.usageData)) {
     const resetTime =
       ctx.usageData.fiveHour === 100
-        ? formatResetTime(ctx.usageData.fiveHourResetAt)
-        : formatResetTime(ctx.usageData.sevenDayResetAt);
-    return `${usageLabel} ${critical(`⚠ ${t("status.limitReached")}${resetTime ? ` (${t("format.resets")} ${resetTime})` : ""}`, colors)}`;
+        ? formatResetTime(ctx.usageData.fiveHourResetAt, timeFormat)
+        : formatResetTime(ctx.usageData.sevenDayResetAt, timeFormat);
+    if (usageCompact) {
+      return critical(`⚠ Limit${resetTime ? ` (${resetTime})` : ""}`, colors);
+    }
+    const resetSuffix = resetTime
+      ? showResetLabel
+        ? ` (${t(resetsKey)} ${resetTime})`
+        : ` (${resetTime})`
+      : "";
+    return `${usageLabel} ${critical(`⚠ ${t("status.limitReached")}${resetSuffix}`, colors)}`;
   }
 
   const threshold = display?.usageThreshold ?? 0;
@@ -42,26 +59,38 @@ export function renderUsageLine(ctx: RenderContext): string | null {
     return null;
   }
 
+  const sevenDayThreshold = display?.sevenDayThreshold ?? 80;
+
+  if (usageCompact) {
+    const fiveHourPart = fiveHour !== null
+      ? formatCompactWindowPart("5h", fiveHour, ctx.usageData.fiveHourResetAt, timeFormat, colors)
+      : null;
+    const sevenDayPart = (sevenDay !== null && (fiveHour === null || sevenDay >= sevenDayThreshold))
+      ? formatCompactWindowPart("7d", sevenDay, ctx.usageData.sevenDayResetAt, timeFormat, colors)
+      : null;
+
+    if (fiveHourPart && sevenDayPart) {
+      return `${fiveHourPart} | ${sevenDayPart}`;
+    }
+    return fiveHourPart ?? sevenDayPart ?? null;
+  }
+
   const usageBarEnabled = display?.usageBarEnabled ?? true;
-  // R9b: GLM threshold override — always show 7d bar for GLM
-  const sevenDayThreshold = isGlm ? 0 : (display?.sevenDayThreshold ?? 80);
-  const baseBarWidth = getAdaptiveBarWidth();
-  // Unified 0.8 scaling for all bars to keep context/usage visually consistent
-  const barWidth = Math.max(4, Math.ceil(baseBarWidth * 0.8));
+  const barWidth = getAdaptiveBarWidth();
 
   if (fiveHour === null && sevenDay !== null) {
-    const isGlmCycle = isGlm && ctx.usageData.sevenDayWindowType === 'cycle';
     const weeklyOnlyPart = formatUsageWindowPart({
-      label: isGlm ? "7d" : t("label.weekly"),
+      label: t("label.weekly"),
+      labelKey: "label.weekly",
       percent: sevenDay,
       resetAt: ctx.usageData.sevenDayResetAt,
       colors,
       usageBarEnabled,
       barWidth,
-      forceLabel: !isGlmCycle,
-      windowType: ctx.usageData.sevenDayWindowType,
-      tokenCount: ctx.usageData.sevenDayTokens,
-      showResetTime: display?.showUsageResetTime,
+      timeFormat,
+      showResetLabel,
+      forceLabel: true,
+      alignLabels,
     });
     return `${usageLabel} ${weeklyOnlyPart}`;
   }
@@ -73,28 +102,43 @@ export function renderUsageLine(ctx: RenderContext): string | null {
     colors,
     usageBarEnabled,
     barWidth,
-    windowType: ctx.usageData.fiveHourWindowType,
-    showResetTime: display?.showUsageResetTime,
+    timeFormat,
+    showResetLabel,
   });
 
   if (sevenDay !== null && sevenDay >= sevenDayThreshold) {
-    const isGlmCycle = isGlm && ctx.usageData.sevenDayWindowType === 'cycle';
     const sevenDayPart = formatUsageWindowPart({
-      label: isGlm ? "7d" : t("label.weekly"),
+      label: t("label.weekly"),
+      labelKey: "label.weekly",
       percent: sevenDay,
       resetAt: ctx.usageData.sevenDayResetAt,
       colors,
       usageBarEnabled,
       barWidth,
-      forceLabel: !isGlmCycle,
-      windowType: ctx.usageData.sevenDayWindowType,
-      tokenCount: ctx.usageData.sevenDayTokens,
-      showResetTime: display?.showUsageResetTime,
+      timeFormat,
+      showResetLabel,
+      forceLabel: true,
+      alignLabels,
     });
     return `${usageLabel} ${fiveHourPart} | ${sevenDayPart}`;
   }
 
   return `${usageLabel} ${fiveHourPart}`;
+}
+
+function formatCompactWindowPart(
+  windowLabel: string,
+  percent: number | null,
+  resetAt: Date | null,
+  timeFormat: TimeFormatMode,
+  colors?: RenderContext["config"]["colors"],
+): string {
+  const usageDisplay = formatUsagePercent(percent, colors);
+  const reset = formatResetTime(resetAt, timeFormat);
+  const styledLabel = label(`${windowLabel}:`, colors);
+  return reset
+    ? `${styledLabel} ${usageDisplay} ${label(`(${reset})`, colors)}`
+    : `${styledLabel} ${usageDisplay}`;
 }
 
 function formatUsagePercent(
@@ -110,91 +154,50 @@ function formatUsagePercent(
 
 function formatUsageWindowPart({
   label: windowLabel,
+  labelKey,
   percent,
   resetAt,
   colors,
   usageBarEnabled,
   barWidth,
+  timeFormat = 'relative',
+  showResetLabel,
   forceLabel = false,
-  windowType,
-  tokenCount,
-  showResetTime,
+  alignLabels = false,
 }: {
   label: string;
+  labelKey?: MessageKey;
   percent: number | null;
   resetAt: Date | null;
   colors?: RenderContext["config"]["colors"];
   usageBarEnabled: boolean;
   barWidth: number;
+  timeFormat?: TimeFormatMode;
+  showResetLabel: boolean;
   forceLabel?: boolean;
-  windowType?: UsageWindowType;
-  tokenCount?: number;
-  showResetTime?: boolean;
+  alignLabels?: boolean;
 }): string {
   const usageDisplay = formatUsagePercent(percent, colors);
-  const styledLabel = label(windowLabel, colors);
+  const reset = formatResetTime(resetAt, timeFormat);
+  const styledLabel = labelKey
+    ? progressLabel(labelKey, colors, alignLabels)
+    : label(windowLabel, colors);
+  const resetsKey = timeFormat === 'absolute' ? "format.resets" : "format.resetsIn";
 
-  // For rolling/cycle windows: no reset time, add semantic label
-  const isSemanticWindow = windowType === 'rolling' || windowType === 'cycle';
+  const resetSuffix = reset
+    ? showResetLabel
+      ? `(${t(resetsKey)} ${reset})`
+      : `(${reset})`
+    : "";
 
-  // Build suffix for cycle windows
-  let suffix = '';
-  if (windowType === 'rolling') {
-    suffix = ` (${styledLabel})`;
-  } else if (windowType === 'cycle' && tokenCount != null && tokenCount > 0) {
-    // 7d with tokens: "138M, 5d" (token count + remaining time)
-    const remaining = formatResetTime(resetAt);
-    suffix = remaining ? ` (${formatTokenCount(tokenCount)}, ${remaining})` : ` (${formatTokenCount(tokenCount)})`;
-  } else if (windowType === 'cycle' && resetAt != null) {
-    // 5h cycle: remaining time "3h 30m"
-    const remaining = formatResetTime(resetAt);
-    suffix = remaining ? ` (${remaining})` : '';
-  } else if (windowType === 'cycle') {
-    suffix = ` (${styledLabel})`;
-  }
-
-  // For fixed windows (Anthropic), show reset time if available
-  if (!isSemanticWindow) {
-    const reset = formatResetTime(resetAt);
-    if (usageBarEnabled) {
-      const body = reset
-        ? `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay} (${t("format.resetsIn")} ${reset})`
-        : `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}`;
-      return forceLabel ? `${styledLabel} ${body}` : body;
-    }
-
-    return reset
-      ? `${styledLabel} ${usageDisplay} (${t("format.resetsIn")} ${reset})`
-      : `${styledLabel} ${usageDisplay}`;
-  }
-
-  // Rolling/cycle: show suffix
   if (usageBarEnabled) {
-    const body = `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}${suffix}`;
+    const body = resetSuffix
+      ? `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay} ${resetSuffix}`
+      : `${quotaBar(percent ?? 0, barWidth, colors)} ${usageDisplay}`;
     return forceLabel ? `${styledLabel} ${body}` : body;
   }
 
-  return `${styledLabel} ${usageDisplay}${suffix}`;
-}
-
-function formatResetTime(resetAt: Date | null): string {
-  if (!resetAt) return "";
-  const now = new Date();
-  const diffMs = resetAt.getTime() - now.getTime();
-  if (diffMs <= 0) return "";
-
-  const diffMins = Math.ceil(diffMs / 60000);
-  if (diffMins < 60) return `${diffMins}m`;
-
-  const hours = Math.floor(diffMins / 60);
-  const mins = diffMins % 60;
-
-  if (hours >= 24) {
-    const days = Math.floor(hours / 24);
-    const remHours = hours % 24;
-    if (remHours > 0) return `${days}d ${remHours}h`;
-    return `${days}d`;
-  }
-
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  return resetSuffix
+    ? `${styledLabel} ${usageDisplay} ${resetSuffix}`
+    : `${styledLabel} ${usageDisplay}`;
 }

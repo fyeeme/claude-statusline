@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _setCreateReadStreamForTests, parseTranscript } from '../dist/transcript.js';
@@ -191,8 +192,38 @@ test('getBufferedPercent falls back when native is null', () => {
 });
 
 test('native percentage handles zero correctly', () => {
+  // used_percentage: 0 with no tokens → still 0
   assert.equal(getContextPercent({ context_window: { used_percentage: 0 } }), 0);
   assert.equal(getBufferedPercent({ context_window: { used_percentage: 0 } }), 0);
+});
+
+test('getContextPercent falls through to token-based calculation when used_percentage is 0 but tokens exist', () => {
+  // On a fresh session Claude Code emits used_percentage=0 before the first API
+  // response, while current_usage already contains the initial-context tokens
+  // (system prompt, tools, memory files).  The HUD should reflect them.
+  // 18200 / 200000 = 9.1% → rounds to 9%
+  const percent = getContextPercent({
+    context_window: {
+      context_window_size: 200000,
+      current_usage: { input_tokens: 18200 },
+      used_percentage: 0,
+    },
+  });
+  assert.equal(percent, 9);
+});
+
+test('getBufferedPercent falls through to token-based calculation when used_percentage is 0 but tokens exist', () => {
+  // Same fresh-session scenario for the buffered variant.
+  // 18200 / 200000 = 9.1% raw; scale = (0.091 - 0.05) / (0.50 - 0.05) ≈ 0.091
+  // buffer = 200000 * 0.165 * 0.091 ≈ 3003; (18200 + 3003) / 200000 ≈ 10.6% → 11%
+  const percent = getBufferedPercent({
+    context_window: {
+      context_window_size: 200000,
+      current_usage: { input_tokens: 18200 },
+      used_percentage: 0,
+    },
+  });
+  assert.ok(percent > 9, `expected buffered percent > 9, got ${percent}`);
 });
 
 test('native percentage clamps negative values to 0', () => {
@@ -242,9 +273,6 @@ test('getUsageFromStdin parses official Claude Code rate_limits payload', () => 
     fiveHourResetAt: new Date(1710000000 * 1000),
     sevenDayStartAt: null,
     sevenDayResetAt: new Date(1710600000 * 1000),
-    platform: 'anthropic',
-    fiveHourWindowType: 'fixed',
-    sevenDayWindowType: 'fixed',
   });
 });
 
@@ -269,9 +297,6 @@ test('getUsageFromStdin rejects invalid fields and keeps only official usage dat
     fiveHourResetAt: null,
     sevenDayStartAt: null,
     sevenDayResetAt: null,
-    platform: 'anthropic',
-    fiveHourWindowType: 'fixed',
-    sevenDayWindowType: 'fixed',
   });
 });
 
@@ -345,7 +370,12 @@ test('bedrock model detection recognizes bedrock ids', () => {
   assert.ok(isBedrockModelId('anthropic.claude-3-5-sonnet-20240620-v1:0'));
   assert.ok(isBedrockModelId('eu.anthropic.claude-opus-4-5-20251101-v1:0'));
   assert.equal(isBedrockModelId('claude-3-5-sonnet-20241022'), false);
-  assert.equal(getProviderLabel({ model: { id: 'anthropic.claude-3-5-sonnet-20240620-v1:0' } }), 'Bedrock');
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+  try {
+    assert.equal(getProviderLabel({ model: { id: 'anthropic.claude-3-5-sonnet-20240620-v1:0' } }), 'Bedrock');
+  } finally {
+    delete process.env.CLAUDE_CODE_USE_BEDROCK;
+  }
   assert.equal(getProviderLabel({ model: { id: 'claude-3-5-sonnet-20241022' } }), null);
 });
 
@@ -386,20 +416,25 @@ test('resolveSessionCost falls back to transcript estimation when native cost is
 });
 
 test('resolveSessionCost ignores native cost for provider-routed sessions', () => {
-  const cost = resolveSessionCost(
-    {
-      model: { id: 'anthropic.claude-sonnet-4-20250514-v1:0' },
-      cost: { total_cost_usd: 0 },
-    },
-    {
-      inputTokens: 100000,
-      cacheCreationTokens: 10000,
-      cacheReadTokens: 20000,
-      outputTokens: 50000,
-    },
-  );
+  process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+  try {
+    const cost = resolveSessionCost(
+      {
+        model: { id: 'anthropic.claude-sonnet-4-20250514-v1:0' },
+        cost: { total_cost_usd: 0 },
+      },
+      {
+        inputTokens: 100000,
+        cacheCreationTokens: 10000,
+        cacheReadTokens: 20000,
+        outputTokens: 50000,
+      },
+    );
 
-  assert.equal(cost, null);
+    assert.equal(cost, null);
+  } finally {
+    delete process.env.CLAUDE_CODE_USE_BEDROCK;
+  }
 });
 
 test('resolveSessionCost falls back when native cost is invalid', () => {
@@ -492,6 +527,26 @@ test('parseTranscript accumulates session token usage from assistant messages', 
       cacheCreationTokens: 9000,
       cacheReadTokens: 2000,
     });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript captures the last assistant response timestamp', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const filePath = path.join(dir, 'assistant-timestamp.jsonl');
+  const lines = [
+    JSON.stringify({ type: 'assistant', timestamp: '2024-01-01T00:00:05.000Z' }),
+    JSON.stringify({ type: 'user', timestamp: '2024-01-01T00:00:06.000Z' }),
+    JSON.stringify({ type: 'assistant', timestamp: '2024-01-01T00:00:10.000Z' }),
+    JSON.stringify({ type: 'assistant', timestamp: 'not-a-date' }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.lastAssistantResponseAt?.toISOString(), '2024-01-01T00:00:10.000Z');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -750,7 +805,7 @@ test('parseTranscript handles edge-case lines and error statuses', async () => {
     const errorTool = result.tools.find((tool) => tool.id === 'tool-error');
     assert.equal(errorTool?.status, 'error');
     assert.equal(errorTool?.target, '/tmp/fallback.txt');
-    assert.equal(result.agents[0]?.type, 'unknown');
+    assert.equal(result.agents[0]?.type, 'agent');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -942,6 +997,52 @@ test('parseTranscript falls back to a fresh parse when the transcript cache is c
     const second = await parseTranscript(transcriptPath);
     assert.equal(second.tools.length, 1);
     assert.equal(second.tools[0].target, '/tmp/original.txt');
+  } finally {
+    restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript invalidates transcript cache entries from older cache versions', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const configDir = path.join(dir, '.claude-test');
+  const transcriptPath = path.join(dir, 'cache-version-upgrade.jsonl');
+  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const line = `${JSON.stringify({
+    type: 'assistant',
+    timestamp: '2024-01-01T00:00:00.000Z',
+    message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: '/tmp/fresh.txt' } }] },
+  })}\n`;
+
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  await writeFile(transcriptPath, line, 'utf8');
+  fs.utimesSync(transcriptPath, 1710000200, 1710000200);
+
+  try {
+    const stat = fs.statSync(transcriptPath);
+    const cachePath = path.join(
+      configDir,
+      'plugins',
+      'claude-hud',
+      'transcript-cache',
+      `${createHash('sha256').update(path.resolve(transcriptPath)).digest('hex')}.json`
+    );
+    await mkdir(path.dirname(cachePath), { recursive: true });
+    await writeFile(cachePath, JSON.stringify({
+      transcriptPath: path.resolve(transcriptPath),
+      transcriptState: { mtimeMs: stat.mtimeMs, size: stat.size },
+      data: {
+        tools: [],
+        agents: [],
+        todos: [],
+        sessionName: 'stale-cache',
+      },
+    }), 'utf8');
+
+    const result = await parseTranscript(transcriptPath);
+    assert.equal(result.sessionName, undefined);
+    assert.equal(result.tools.length, 1);
+    assert.equal(result.lastAssistantResponseAt?.toISOString(), '2024-01-01T00:00:00.000Z');
   } finally {
     restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
     await rm(dir, { recursive: true, force: true });

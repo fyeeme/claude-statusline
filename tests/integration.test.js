@@ -54,7 +54,7 @@ test("CLI renders expected output for a basic transcript", async (t) => {
       cwd: path.resolve(process.cwd()),
       input: stdin,
       encoding: "utf8",
-      env: { ...process.env, HOME: homeDir, LANG: "C", ANTHROPIC_BASE_URL: "", ANTHROPIC_AUTH_TOKEN: "" },
+      env: { ...process.env, HOME: homeDir, LANG: "C", ANTHROPIC_BASE_URL: "" },
     });
 
     if (skipIfSpawnBlocked(result, t)) return;
@@ -74,23 +74,29 @@ test("CLI renders expected output for a basic transcript", async (t) => {
   }
 });
 
-test("CLI prints initializing message on empty stdin", (t) => {
-  const result = spawnSync("node", ["dist/index.js"], {
-    cwd: path.resolve(process.cwd()),
-    input: "",
-    encoding: "utf8",
-    env: { ...process.env, LANG: "C" },
-  });
+test("CLI prints initializing message on empty stdin", async (t) => {
+  const homeDir = await mkdtemp(path.join(tmpdir(), "claude-hud-home-"));
 
-  if (skipIfSpawnBlocked(result, t)) return;
+  try {
+    const result = spawnSync("node", ["dist/index.js"], {
+      cwd: path.resolve(process.cwd()),
+      input: "",
+      encoding: "utf8",
+      env: { ...process.env, HOME: homeDir, LANG: "C", ANTHROPIC_BASE_URL: "" },
+    });
 
-  assert.equal(result.error, undefined, result.error?.message);
-  assert.equal(result.status, 0, result.stderr || "non-zero exit");
-  const normalized = stripAnsi(result.stdout)
-    .replace(/\u00A0/g, " ")
-    .trimEnd();
-  assert.ok(
-    normalized.startsWith("[claude-hud] Initializing..."),
-    `unexpected output: ${normalized}`,
-  );
+    if (skipIfSpawnBlocked(result, t)) return;
+
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 0, result.stderr || "non-zero exit");
+    const normalized = stripAnsi(result.stdout)
+      .replace(/\u00A0/g, " ")
+      .trimEnd();
+    assert.ok(
+      normalized.startsWith("[claude-hud] Initializing..."),
+      `unexpected output: ${normalized}`,
+    );
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
 });

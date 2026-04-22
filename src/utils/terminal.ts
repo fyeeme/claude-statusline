@@ -1,29 +1,38 @@
-// Default fallback when no terminal width can be detected.
-// Overridden by config.terminalWidth if set (see config.ts).
 export const UNKNOWN_TERMINAL_WIDTH = 40;
 
-// The effective fallback width — updated by loadConfig().
-let _fallbackWidth = UNKNOWN_TERMINAL_WIDTH;
-
-export function getFallbackWidth(): number {
-  return _fallbackWidth;
+function parseEnvColumns(): number | null {
+  const envColumns = Number.parseInt(process.env.COLUMNS ?? '', 10);
+  return Number.isFinite(envColumns) && envColumns > 0 ? envColumns : null;
 }
 
-export function setFallbackWidth(width: number): void {
-  if (Number.isFinite(width) && width > 0) {
-    _fallbackWidth = Math.floor(width);
+function parseStreamColumns(columns: unknown): number | null {
+  return typeof columns === 'number' && Number.isFinite(columns) && columns > 0
+    ? Math.floor(columns)
+    : null;
+}
+
+export function getTerminalWidth(options: { preferEnv?: boolean; fallback?: number | null } = {}): number | null {
+  const { preferEnv = false, fallback = null } = options;
+
+  if (preferEnv) {
+    return parseEnvColumns()
+      ?? parseStreamColumns(process.stdout?.columns)
+      ?? parseStreamColumns(process.stderr?.columns)
+      ?? fallback;
   }
+
+  return parseStreamColumns(process.stdout?.columns)
+    ?? parseStreamColumns(process.stderr?.columns)
+    ?? parseEnvColumns()
+    ?? fallback;
 }
 
 // Returns a progress bar width scaled to the current terminal width.
 // Wide (>=100): 10, Medium (60-99): 6, Narrow (<60): 4.
 export function getAdaptiveBarWidth(): number {
-  const stdoutCols = process.stdout?.columns;
-  const cols = (typeof stdoutCols === 'number' && Number.isFinite(stdoutCols) && stdoutCols > 0)
-    ? Math.floor(stdoutCols)
-    : Number.parseInt(process.env.COLUMNS ?? '', 10);
+  const cols = getTerminalWidth({ preferEnv: true });
 
-  if (Number.isFinite(cols) && cols > 0) {
+  if (cols !== null) {
     if (cols >= 100) return 10;
     if (cols >= 60) return 6;
     return 4;

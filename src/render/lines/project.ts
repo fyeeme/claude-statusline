@@ -22,7 +22,12 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     const model = formatModelName(getModelName(ctx.stdin), ctx.config?.display?.modelFormat, ctx.config?.display?.modelOverride);
     const providerLabel = getProviderLabel(ctx.stdin);
     const modelQualifier = providerLabel ?? undefined;
-    const modelDisplay = modelQualifier ? `${model} | ${modelQualifier}` : model;
+    let modelDisplay = modelQualifier ? `${model} | ${modelQualifier}` : model;
+    if (ctx.effortLevel && ctx.effortSymbol) {
+      modelDisplay += ` ${ctx.effortSymbol}${ctx.effortLevel}`;
+    } else if (ctx.effortLevel) {
+      modelDisplay += ` ${ctx.effortLevel}`;
+    }
     parts.push(modelColor(`[${modelDisplay}]`, colors));
   }
 
@@ -38,6 +43,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
   let gitPart = '';
   const gitConfig = ctx.config?.gitStatus;
   const showGit = gitConfig?.enabled ?? true;
+  const branchOverflow = gitConfig?.branchOverflow ?? 'truncate';
 
   if (showGit && ctx.gitStatus) {
     const branchText = ctx.gitStatus.branch + ((gitConfig?.showDirty ?? true) && ctx.gitStatus.isDirty ? '*' : '');
@@ -66,7 +72,12 @@ export function renderProjectLine(ctx: RenderContext): string | null {
   }
 
   if (projectPart && gitPart) {
-    parts.push(`${projectPart} ${gitPart}`);
+    if (branchOverflow === 'wrap') {
+      parts.push(projectPart);
+      parts.push(gitPart);
+    } else {
+      parts.push(`${projectPart} ${gitPart}`);
+    }
   } else if (projectPart) {
     parts.push(projectPart);
   } else if (gitPart) {
@@ -85,13 +96,6 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     parts.push(label(ctx.extraLabel, colors));
   }
 
-  if (display?.showSpeed) {
-    const speed = getOutputSpeed(ctx.stdin);
-    if (speed !== null) {
-      parts.push(label(`${t('format.out')}: ${speed.toFixed(1)} ${t('format.tokPerSec')}`, colors));
-    }
-  }
-
   if (display?.showDuration !== false && ctx.sessionDuration) {
     parts.push(label(`⏱️  ${ctx.sessionDuration}`, colors));
   }
@@ -99,6 +103,13 @@ export function renderProjectLine(ctx: RenderContext): string | null {
   const costEstimate = renderCostEstimate(ctx);
   if (costEstimate) {
     parts.push(costEstimate);
+  }
+
+  if (display?.showSpeed) {
+    const speed = getOutputSpeed(ctx.stdin);
+    if (speed !== null) {
+      parts.push(label(`${t('format.out')}: ${speed.toFixed(1)} ${t('format.tokPerSec')}`, colors));
+    }
   }
 
   const customLine = display?.customLine;
@@ -110,7 +121,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     return null;
   }
 
-  return parts.join(' | ');
+  return parts.join(' \u2502 ');
 }
 
 function formatAheadCount(

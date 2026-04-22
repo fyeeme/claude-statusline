@@ -10,6 +10,7 @@ export interface StdinData {
   };
   context_window?: {
     context_window_size?: number;
+    total_input_tokens?: number | null;
     current_usage?: {
       input_tokens?: number;
       output_tokens?: number;
@@ -37,6 +38,8 @@ export interface StdinData {
       resets_at?: number | null;
     } | null;
   } | null;
+  // Future: Claude Code may expose effort level directly in stdin JSON
+  effort?: string | null;
 }
 
 export interface ToolEntry {
@@ -87,6 +90,18 @@ export interface UsageData {
   fiveHourTokens?: number;
 }
 
+export interface ExternalUsageSnapshot {
+  five_hour?: {
+    used_percentage?: number | null;
+    resets_at?: string | number | null;
+  } | null;
+  seven_day?: {
+    used_percentage?: number | null;
+    resets_at?: string | number | null;
+  } | null;
+  updated_at?: string | number | null;
+}
+
 export interface MemoryInfo {
   totalBytes: number;
   usedBytes: number;
@@ -117,6 +132,7 @@ export interface TranscriptData {
   todos: TodoItem[];
   sessionStart?: Date;
   sessionName?: string;
+  lastAssistantResponseAt?: Date;
   sessionTokens?: SessionTokenUsage;
 }
 
@@ -135,4 +151,6 @@ export interface RenderContext {
   extraLabel: string | null;
   outputStyle?: string;
   claudeCodeVersion?: string;
+  effortLevel?: string;
+  effortSymbol?: string;
 }
