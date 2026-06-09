@@ -32,9 +32,11 @@ export function renderUsageLine(
   }
 
   const usageLabel = progressLabel("label.usage", colors, alignLabels);
+  const balanceLabel = ctx.usageData.balanceLabel ?? null;
+  const hasWindowData = ctx.usageData.fiveHour !== null || ctx.usageData.sevenDay !== null;
 
-  if (ctx.usageData.balanceLabel) {
-    return `${usageLabel} ${ctx.usageData.balanceLabel}`;
+  if (balanceLabel && !hasWindowData) {
+    return `${usageLabel} ${balanceLabel}`;
   }
 
   const timeFormat = normalizeTimeFormat(display?.timeFormat);
@@ -50,14 +52,14 @@ export function renderUsageLine(
         ? formatResetTime(ctx.usageData.fiveHourResetAt, limitTimeFormat)
         : formatResetTime(ctx.usageData.sevenDayResetAt, limitTimeFormat);
     if (usageCompact) {
-      return critical(`⚠ Limit${resetTime ? ` (${resetTime})` : ""}`, colors);
+      return appendBalance(critical(`⚠ Limit${resetTime ? ` (${resetTime})` : ""}`, colors), balanceLabel);
     }
     const resetSuffix = resetTime
       ? showResetLabel
         ? ` (${t(resetsKey)} ${resetTime})`
         : ` (${resetTime})`
       : "";
-    return `${usageLabel} ${critical(`⚠ ${t("status.limitReached")}${resetSuffix}`, colors)}`;
+    return appendBalance(`${usageLabel} ${critical(`⚠ ${t("status.limitReached")}${resetSuffix}`, colors)}`, balanceLabel);
   }
 
   const threshold = display?.usageThreshold ?? 0;
@@ -66,7 +68,7 @@ export function renderUsageLine(
 
   const effectiveUsage = Math.max(fiveHour ?? 0, sevenDay ?? 0);
   if (effectiveUsage < threshold) {
-    return null;
+    return balanceLabel ? `${usageLabel} ${balanceLabel}` : null;
   }
 
   const sevenDayThreshold = display?.sevenDayThreshold ?? 80;
@@ -80,9 +82,10 @@ export function renderUsageLine(
       : null;
 
     if (fiveHourPart && sevenDayPart) {
-      return `${fiveHourPart} | ${sevenDayPart}`;
+      return appendBalance(`${fiveHourPart} | ${sevenDayPart}`, balanceLabel);
     }
-    return fiveHourPart ?? sevenDayPart ?? null;
+    const compactLine = fiveHourPart ?? sevenDayPart;
+    return compactLine ? appendBalance(compactLine, balanceLabel) : null;
   }
 
   const usageBarEnabled = display?.usageBarEnabled ?? true;
@@ -104,7 +107,7 @@ export function renderUsageLine(
       alignLabels,
       usageValueMode,
     });
-    return `${usageLabel} ${weeklyOnlyPart}`;
+    return appendBalance(`${usageLabel} ${weeklyOnlyPart}`, balanceLabel);
   }
 
   const fiveHourPart = formatUsageWindowPart({
@@ -136,10 +139,14 @@ export function renderUsageLine(
       alignLabels,
       usageValueMode,
     });
-    return `${usageLabel} ${fiveHourPart} | ${sevenDayPart}`;
+    return appendBalance(`${usageLabel} ${fiveHourPart} | ${sevenDayPart}`, balanceLabel);
   }
 
-  return `${usageLabel} ${fiveHourPart}`;
+  return appendBalance(`${usageLabel} ${fiveHourPart}`, balanceLabel);
+}
+
+function appendBalance(line: string, balanceLabel: string | null): string {
+  return balanceLabel ? `${line} | ${balanceLabel}` : line;
 }
 
 function formatCompactWindowPart(

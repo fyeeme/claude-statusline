@@ -188,7 +188,7 @@ Chinese HUD labels are available as an explicit opt-in. English stays the defaul
 | `display.showResetLabel` | boolean | true | Show the `resets in` prefix before usage countdowns |
 | `display.timeFormat` | `relative` \| `absolute` \| `both` \| `elapsed` \| `elapsedAndAbsolute` | `relative` | How usage-window time is shown: countdown only (`resets in 2h 30m`), wall-clock reset (`resets at 14:30`), both, elapsed window percentage (`53% elapsed`), or elapsed plus wall-clock reset |
 | `display.sevenDayThreshold` | 0-100 | 80 | Show 7-day usage when >= threshold (0 = always) |
-| `display.externalUsagePath` | string | `""` | Optional path to a local usage snapshot file used only when stdin `rate_limits` are missing |
+| `display.externalUsagePath` | string | `""` | Optional path to a local usage snapshot file. When stdin `rate_limits` are present, only `balance_label` is appended; when they are missing, valid usage windows can be used as a fallback |
 | `display.externalUsageWritePath` | string | `""` | Optional absolute `.json` path in an existing directory. When stdin `rate_limits` exists, ClaudeHUD writes a private snapshot for other local tools. Relative paths, non-json files, and missing parent directories are ignored |
 | `display.externalUsageFreshnessMs` | number | `300000` | Maximum allowed age for the external usage snapshot before it is ignored |
 | `display.showTokenBreakdown` | boolean | true | Show token details at high context (85%+) |
@@ -236,7 +236,7 @@ Usage display is **enabled by default** when Claude Code provides subscriber `ra
 
 Set `display.usageValue` to `remaining` to show quota left instead of quota used. Warning colors and 7-day threshold checks still use the underlying used percentage.
 
-ClaudeHUD prefers the official statusline stdin payload. If `rate_limits` are missing, you can opt into a local sidecar fallback by setting `display.externalUsagePath` to a JSON snapshot written by another tool such as a proxy. Stdin still wins whenever both sources exist.
+ClaudeHUD prefers the official statusline stdin payload for rate-limit windows. If `display.externalUsagePath` points to a fresh local sidecar snapshot, ClaudeHUD can append its `balance_label` alongside stdin windows. If stdin `rate_limits` are missing, the same snapshot can provide fallback usage windows.
 
 The fallback snapshot must be fresh enough (`display.externalUsageFreshnessMs`) and include valid `updated_at`, plus a `five_hour` window, `seven_day` window, or `balance_label`. `balance_label` is optional text for prepaid provider balances; it is trimmed, length-limited, and sanitized before display. Invalid JSON, stale files, or invalid timestamps are ignored quietly.
 

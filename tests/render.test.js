@@ -1494,6 +1494,69 @@ test('renderSessionLine displays external balance labels', () => {
   assert.ok(line.includes('Usage ¥6.35'), `should show balance label in compact layout: ${line}`);
   assert.ok(!line.includes('5h'), `should bypass percentage window rendering: ${line}`);
 });
+test('renderSessionLine displays balance label alongside rate-limit windows', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'Max',
+    fiveHour: 25,
+    sevenDay: null,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+    balanceLabel: '$1,256 / $1,800',
+  };
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('5h'), `should show 5h window alongside balance: ${line}`);
+  assert.ok(line.includes('$1,256 / $1,800'), `should show balance label alongside windows: ${line}`);
+});
+
+test('renderSessionLine displays balance label alongside limit reached warnings', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'Max',
+    fiveHour: 100,
+    sevenDay: null,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: null,
+    balanceLabel: '$1,256 / $1,800',
+  };
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('Limit reached'), `should show limit warning: ${line}`);
+  assert.ok(line.includes('$1,256 / $1,800'), `should show balance label alongside limit warning: ${line}`);
+});
+
+test('renderUsageLine displays balance label alongside rate-limit windows', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'Max',
+    fiveHour: 25,
+    sevenDay: null,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+    balanceLabel: '$1,256 / $1,800',
+  };
+
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.ok(line.includes('5h'), `should show 5h window alongside balance: ${line}`);
+  assert.ok(line.includes('$1,256 / $1,800'), `should show balance label alongside windows: ${line}`);
+});
+
+test('renderUsageLine displays balance label alongside limit reached warnings', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'Max',
+    fiveHour: 100,
+    sevenDay: null,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: null,
+    balanceLabel: '$1,256 / $1,800',
+  };
+
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.ok(line.includes('Limit reached'), `should show limit warning: ${line}`);
+  assert.ok(line.includes('$1,256 / $1,800'), `should show balance label alongside limit warning: ${line}`);
+});
 
 test('renderSessionLine supports remaining-based usage display', () => {
   const ctx = baseContext();
