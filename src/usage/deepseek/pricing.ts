@@ -1,9 +1,8 @@
 /**
- * DeepSeek model pricing (CNY per million tokens).
+ * DeepSeek model pricing (USD per million tokens).
  *
- * cacheRead is the absolute price for cache-hit input tokens;
- * the multiplier (relative to input) is derived automatically.
- * cacheWrite=0 means cache creation is free.
+ * Automatically converted to CNY in renderDeepSeekUsage when
+ * the balance currency is CNY (exchange rate 1:7).
  */
 export interface DeepSeekModelPricing {
   input: number;
@@ -14,15 +13,15 @@ export interface DeepSeekModelPricing {
 
 export const DEEPSEEK_MODEL_PRICING: Record<string, DeepSeekModelPricing> = {
   "deepseek-chat": {
-    input: 1.00,
-    output: 4.00,
-    cacheRead: 0.14,
+    input: 0.14,
+    output: 0.57,
+    cacheRead: 0.02,
     cacheWrite: 0,
   },
   "deepseek-reasoner": {
-    input: 2.00,
-    output: 6.00,
-    cacheRead: 0.28,
+    input: 0.29,
+    output: 0.86,
+    cacheRead: 0.04,
     cacheWrite: 0,
   },
   "deepseek-v4-pro": {
