@@ -2141,6 +2141,29 @@ test('renderSessionLine folds compact token summary with hit rate when cache rea
   assert.ok(/\d+%/.test(line), `should include hit rate percent: ${line}`);
 });
 
+test('renderSessionLine renders compact as identity + metrics two segments', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.gitStatus = { branch: 'main', isDirty: false, ahead: 0, behind: 0 };
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 9,
+    sevenDay: null,
+    fiveHourStartAt: null,
+    fiveHourResetAt: new Date(Date.now() + 3 * 60 * 60 * 1000),
+    sevenDayStartAt: null,
+    sevenDayResetAt: null,
+  };
+  const output = stripAnsi(renderSessionLine(ctx));
+  const lines = output.split('\n');
+  assert.equal(lines.length, 2, `compact should render two segments: ${output}`);
+  assert.ok(lines[0].includes('[Opus]'), `identity segment should contain model badge: ${lines[0]}`);
+  assert.ok(lines[0].includes('my-project'), `identity segment should contain project: ${lines[0]}`);
+  assert.ok(lines[1].includes('ctx'), `metrics segment should contain ctx: ${lines[1]}`);
+  assert.ok(!lines[0].includes('█'), `identity segment should have no bar: ${lines[0]}`);
+  assert.ok(!output.includes(' | '), `should use fullwidth separator: ${output}`);
+});
+
 // ---------------------------------------------------------------------------
 // display.timeFormat — absolute and both modes
 // ---------------------------------------------------------------------------

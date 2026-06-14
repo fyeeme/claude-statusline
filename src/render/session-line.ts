@@ -2,7 +2,7 @@ import type { RenderContext } from '../types.js';
 import { isLimitReached } from '../types.js';
 import { getContextPercent, getBufferedPercent, getModelName, formatModelName, getProviderLabel, getTotalTokens } from '../stdin.js';
 import { getOutputSpeed } from '../speed-tracker.js';
-import { coloredBar, critical, git as gitColor, gitBranch as gitBranchColor, label, model as modelColor, project as projectColor, getContextColor, getQuotaColor, quotaBar, custom as customColor, RESET } from './colors.js';
+import { critical, git as gitColor, gitBranch as gitBranchColor, label, model as modelColor, project as projectColor, getContextColor, getQuotaColor, quotaBar, custom as customColor, RESET } from './colors.js';
 import { getAdaptiveBarWidth } from '../utils/terminal.js';
 import { renderCostEstimate } from './lines/cost.js';
 import { renderPromptCacheLine } from './lines/prompt-cache.js';
@@ -31,17 +31,20 @@ export function renderSessionLine(ctx: RenderContext): string {
   const colors = ctx.config?.colors;
   const separator = ctx.config?.display?.separator ?? '｜';
   const barWidth = getAdaptiveBarWidth();
-  const bar = coloredBar(percent, barWidth, colors);
 
-  const parts: string[] = [];
+  const identityParts: string[] = [];
+  const metricsParts: string[] = [];
   const display = ctx.config?.display;
   const timeFormat: TimeFormatMode = display?.timeFormat ?? 'relative';
   const resetsKey = timeFormat === 'absolute' ? 'format.resets' : 'format.resetsIn';
   const contextValueMode = display?.contextValue ?? 'percent';
   const contextValue = formatContextValue(ctx, percent, contextValueMode);
-  const contextValueDisplay = `${getContextColor(percent, colors)}${contextValue}${RESET}`;
+  const contextSize = ctx.stdin.context_window?.context_window_size ?? 0;
+  const contextValueDisplay = contextSize > 0
+    ? `${getContextColor(percent, colors)}${contextValue}${RESET}`
+    : label('--', colors);
 
-  // Model and context bar (FIRST)
+  // Model badge → identity segment
   const providerLabel = getProviderLabel(ctx.stdin);
   const modelQualifier = providerLabel ?? undefined;
   let modelDisplay = modelQualifier ? `${model} | ${modelQualifier}` : model;
@@ -50,25 +53,18 @@ export function renderSessionLine(ctx: RenderContext): string {
   } else if (ctx.effortLevel) {
     modelDisplay += ` ${ctx.effortLevel}`;
   }
-
-  if (display?.showModel !== false && display?.showContextBar !== false) {
-    parts.push(`${modelColor(`[${modelDisplay}]`, colors)} ${bar} ${contextValueDisplay}`);
-  } else if (display?.showModel !== false) {
-    parts.push(`${modelColor(`[${modelDisplay}]`, colors)} ${contextValueDisplay}`);
-  } else if (display?.showContextBar !== false) {
-    parts.push(`${bar} ${contextValueDisplay}`);
-  } else {
-    parts.push(contextValueDisplay);
+  if (display?.showModel !== false) {
+    identityParts.push(modelColor(`[${modelDisplay}]`, colors));
   }
 
-  // Project path + git status (SECOND)
+  // Context value → metrics segment (compact short label "ctx", no bar)
+  metricsParts.push(`${label('ctx', colors)} ${contextValueDisplay}`);
+
+  // Project path + git status → identity segment
   let projectPart: string | null = null;
   if (display?.showProject !== false && ctx.stdin.cwd) {
-    // Split by both Unix (/) and Windows (\) separators for cross-platform support
     const segments = ctx.stdin.cwd.split(/[/\\]/).filter(Boolean);
     const pathLevels = ctx.config?.pathLevels ?? 1;
-    // Always join with forward slash for consistent display
-    // Handle root path (/) which results in empty segments
     const projectPath = segments.length > 0 ? segments.slice(-pathLevels).join('/') : '/';
     projectPart = projectColor(projectPath, colors);
   }
@@ -80,23 +76,13 @@ export function renderSessionLine(ctx: RenderContext): string {
 
   if (showGit && ctx.gitStatus) {
     const gitParts: string[] = [ctx.gitStatus.branch];
-
-    // Show dirty indicator
     if ((gitConfig?.showDirty ?? true) && ctx.gitStatus.isDirty) {
       gitParts.push('*');
     }
-
-    // Show ahead/behind (with space separator for readability)
     if (gitConfig?.showAheadBehind) {
-      if (ctx.gitStatus.ahead > 0) {
-        gitParts.push(` ↑${ctx.gitStatus.ahead}`);
-      }
-      if (ctx.gitStatus.behind > 0) {
-        gitParts.push(` ↓${ctx.gitStatus.behind}`);
-      }
+      if (ctx.gitStatus.ahead > 0) gitParts.push(` ↑${ctx.gitStatus.ahead}`);
+      if (ctx.gitStatus.behind > 0) gitParts.push(` ↓${ctx.gitStatus.behind}`);
     }
-
-    // Show file stats in Starship-compatible format (!modified +added ✘deleted ?untracked)
     if (gitConfig?.showFileStats && ctx.gitStatus.fileStats) {
       const { modified, added, deleted, untracked } = ctx.gitStatus.fileStats;
       const statParts: string[] = [];
@@ -104,61 +90,44 @@ export function renderSessionLine(ctx: RenderContext): string {
       if (added > 0) statParts.push(`+${added}`);
       if (deleted > 0) statParts.push(`✘${deleted}`);
       if (untracked > 0) statParts.push(`?${untracked}`);
-      if (statParts.length > 0) {
-        gitParts.push(` ${statParts.join(' ')}`);
-      }
+      if (statParts.length > 0) gitParts.push(` ${statParts.join(' ')}`);
     }
-
     gitPart = `${gitColor('git:(', colors)}${gitBranchColor(gitParts.join(''), colors)}${gitColor(')', colors)}`;
   }
 
   if (projectPart && gitPart) {
     if (branchOverflow === 'wrap') {
-      parts.push(projectPart);
-      parts.push(gitPart);
+      identityParts.push(projectPart);
+      identityParts.push(gitPart);
     } else {
-      parts.push(`${projectPart} ${gitPart}`);
+      identityParts.push(`${projectPart} ${gitPart}`);
     }
   } else if (projectPart) {
-    parts.push(projectPart);
+    identityParts.push(projectPart);
   } else if (gitPart) {
-    parts.push(gitPart);
+    identityParts.push(gitPart);
   }
 
-  // Session name (custom title from /rename, or auto-generated slug)
   if (display?.showSessionName && ctx.transcript.sessionName) {
-    parts.push(label(ctx.transcript.sessionName, colors));
+    identityParts.push(label(ctx.transcript.sessionName, colors));
   }
-
   if (display?.showClaudeCodeVersion && ctx.claudeCodeVersion) {
-    parts.push(label(`CC v${ctx.claudeCodeVersion}`, colors));
+    identityParts.push(label(`CC v${ctx.claudeCodeVersion}`, colors));
   }
 
-  // Config counts (respects environmentThreshold)
+  // Config counts → identity segment
   if (display?.showConfigCounts !== false) {
     const totalCounts = ctx.claudeMdCount + ctx.rulesCount + ctx.mcpCount + ctx.hooksCount;
     const envThreshold = display?.environmentThreshold ?? 0;
-
     if (totalCounts > 0 && totalCounts >= envThreshold) {
-      if (ctx.claudeMdCount > 0) {
-        parts.push(label(`${ctx.claudeMdCount} CLAUDE.md`, colors));
-      }
-
-      if (ctx.rulesCount > 0) {
-        parts.push(label(`${ctx.rulesCount} ${t('label.rules')}`, colors));
-      }
-
-      if (ctx.mcpCount > 0) {
-        parts.push(label(`${ctx.mcpCount} MCPs`, colors));
-      }
-
-      if (ctx.hooksCount > 0) {
-        parts.push(label(`${ctx.hooksCount} ${t('label.hooks')}`, colors));
-      }
+      if (ctx.claudeMdCount > 0) identityParts.push(label(`${ctx.claudeMdCount} CLAUDE.md`, colors));
+      if (ctx.rulesCount > 0) identityParts.push(label(`${ctx.rulesCount} ${t('label.rules')}`, colors));
+      if (ctx.mcpCount > 0) identityParts.push(label(`${ctx.mcpCount} MCPs`, colors));
+      if (ctx.hooksCount > 0) identityParts.push(label(`${ctx.hooksCount} ${t('label.hooks')}`, colors));
     }
   }
 
-  // Usage limits display (shown when enabled in config, respects usageThreshold)
+  // Usage limits → metrics segment
   if (display?.showUsage !== false && ctx.usageData && !providerLabel) {
     const usageCompact = display?.usageCompact ?? false;
     const showResetLabel = display?.showResetLabel ?? true;
@@ -168,14 +137,12 @@ export function renderSessionLine(ctx: RenderContext): string {
         ? formatResetTime(ctx.usageData.fiveHourResetAt, timeFormat)
         : formatResetTime(ctx.usageData.sevenDayResetAt, timeFormat);
       if (usageCompact) {
-        parts.push(critical(`⚠ Limit${resetTime ? ` (${resetTime})` : ''}`, colors));
+        metricsParts.push(critical(`⚠ Limit${resetTime ? ` (${resetTime})` : ''}`, colors));
       } else {
         const resetSuffix = resetTime
-          ? showResetLabel
-            ? ` (${t(resetsKey)} ${resetTime})`
-            : ` (${resetTime})`
+          ? showResetLabel ? ` (${t(resetsKey)} ${resetTime})` : ` (${resetTime})`
           : '';
-        parts.push(critical(`⚠ ${t('status.limitReached')}${resetSuffix}`, colors));
+        metricsParts.push(critical(`⚠ ${t('status.limitReached')}${resetSuffix}`, colors));
       }
     } else {
       const usageThreshold = display?.usageThreshold ?? 0;
@@ -193,118 +160,80 @@ export function renderSessionLine(ctx: RenderContext): string {
           const sevenDayPart = (sevenDay !== null && (fiveHour === null || sevenDay >= sevenDayThreshold))
             ? formatCompactWindowPart('7d', sevenDay, ctx.usageData.sevenDayResetAt, timeFormat, colors)
             : null;
-
-          if (fiveHourPart && sevenDayPart) {
-            parts.push(fiveHourPart);
-            parts.push(sevenDayPart);
-          } else if (fiveHourPart) {
-            parts.push(fiveHourPart);
-          } else if (sevenDayPart) {
-            parts.push(sevenDayPart);
-          }
+          if (fiveHourPart) metricsParts.push(fiveHourPart);
+          if (sevenDayPart) metricsParts.push(sevenDayPart);
         } else if (fiveHour === null && sevenDay !== null) {
-          const weeklyOnlyPart = formatUsageWindowPart({
-            label: t('label.weekly'),
-            percent: sevenDay,
-            resetAt: ctx.usageData.sevenDayResetAt,
-            colors,
-            usageBarEnabled,
-            barWidth,
-            timeFormat,
-            showResetLabel,
-            forceLabel: true,
-          });
-          parts.push(weeklyOnlyPart);
+          metricsParts.push(formatUsageWindowPart({
+            label: t('label.weekly'), percent: sevenDay, resetAt: ctx.usageData.sevenDayResetAt,
+            colors, usageBarEnabled, barWidth, timeFormat, showResetLabel, forceLabel: true,
+          }));
         } else {
           const fiveHourPart = formatUsageWindowPart({
-            label: '5h',
-            percent: fiveHour,
-            resetAt: ctx.usageData.fiveHourResetAt,
-            colors,
-            usageBarEnabled,
-            barWidth,
-            timeFormat,
-            showResetLabel,
+            label: '5h', percent: fiveHour, resetAt: ctx.usageData.fiveHourResetAt,
+            colors, usageBarEnabled, barWidth, timeFormat, showResetLabel,
           });
-
           const sevenDayThreshold = display?.sevenDayThreshold ?? 80;
           if (sevenDay !== null && sevenDay >= sevenDayThreshold) {
             const sevenDayPart = formatUsageWindowPart({
-              label: t('label.weekly'),
-              percent: sevenDay,
-              resetAt: ctx.usageData.sevenDayResetAt,
-              colors,
-              usageBarEnabled,
-              barWidth,
-              timeFormat,
-              showResetLabel,
-              forceLabel: true,
+              label: t('label.weekly'), percent: sevenDay, resetAt: ctx.usageData.sevenDayResetAt,
+              colors, usageBarEnabled, barWidth, timeFormat, showResetLabel, forceLabel: true,
             });
-            parts.push(`${label(t('label.usage'), colors)} ${fiveHourPart}`);
-            parts.push(sevenDayPart);
+            metricsParts.push(`${label(t('label.usage'), colors)} ${fiveHourPart}`);
+            metricsParts.push(sevenDayPart);
           } else {
-            parts.push(`${label(t('label.usage'), colors)} ${fiveHourPart}`);
+            metricsParts.push(`${label(t('label.usage'), colors)} ${fiveHourPart}`);
           }
         }
       }
     }
   }
 
-  // Session token usage (cumulative, compact folded form)
+  // Session token usage → metrics segment (compact folded form)
   if (display?.showSessionTokens && ctx.transcript.sessionTokens) {
     const st = ctx.transcript.sessionTokens;
     const total = st.inputTokens + st.outputTokens + st.cacheCreationTokens + st.cacheReadTokens;
     if (total > 0) {
       const cacheHitRate = calcCacheHitRate(st.inputTokens, st.cacheCreationTokens, st.cacheReadTokens);
       const hitSuffix = cacheHitRate !== null ? ` ${cacheHitRate}%` : '';
-      parts.push(label(`tok ${formatTokens(total)}${hitSuffix}`, colors));
+      metricsParts.push(label(`tok ${formatTokens(total)}${hitSuffix}`, colors));
     }
   }
 
   if (display?.showDuration !== false && ctx.sessionDuration) {
-    parts.push(label(`⏱️ ${ctx.sessionDuration}`, colors));
+    metricsParts.push(label(`⏱️ ${ctx.sessionDuration}`, colors));
   }
 
   const promptCacheLine = renderPromptCacheLine(ctx);
-  if (promptCacheLine) {
-    parts.push(promptCacheLine);
-  }
+  if (promptCacheLine) metricsParts.push(promptCacheLine);
 
   const costEstimate = renderCostEstimate(ctx);
-  if (costEstimate) {
-    parts.push(costEstimate);
-  }
+  if (costEstimate) metricsParts.push(costEstimate);
 
   if (display?.showSpeed) {
     const speed = getOutputSpeed(ctx.stdin);
     if (speed !== null) {
-      parts.push(label(`${t('format.out')}: ${speed.toFixed(1)} ${t('format.tokPerSec')}`, colors));
+      metricsParts.push(label(`${t('format.out')}: ${speed.toFixed(1)} ${t('format.tokPerSec')}`, colors));
     }
   }
 
-  if (ctx.extraLabel) {
-    parts.push(label(ctx.extraLabel, colors));
-  }
+  if (ctx.extraLabel) metricsParts.push(label(ctx.extraLabel, colors));
 
-  // Custom line (static user-defined text)
   const customLine = display?.customLine;
-  if (customLine) {
-    parts.push(customColor(customLine, colors));
-  }
+  if (customLine) metricsParts.push(customColor(customLine, colors));
 
-  let line = parts.join(separator);
-
-  // Token breakdown at high context
+  // Token breakdown at high context → metrics segment
+  let metricsLine = metricsParts.join(separator);
   if (display?.showTokenBreakdown !== false && percent >= 85) {
     const usage = ctx.stdin.context_window?.current_usage;
     if (usage) {
       const input = formatTokens(usage.input_tokens ?? 0);
       const cache = formatTokens((usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0));
-      line += label(` (${t('format.in')}: ${input} · ${t('format.cache')}: ${cache})`, colors);
+      metricsLine += label(` (${t('format.in')}: ${input} · ${t('format.cache')}: ${cache})`, colors);
     }
   }
 
-  return line;
+  const identityLine = identityParts.join(separator);
+  return [identityLine, metricsLine].filter(Boolean).join('\n');
 }
 
 function formatTokens(n: number): string {
