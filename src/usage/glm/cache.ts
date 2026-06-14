@@ -7,9 +7,7 @@ import type { CalibrationState, CachedUsage } from './types.js';
 
 const STATE_FILENAME = '.usage-state.json';
 const CACHE_FILENAME = '.usage-cache.json';
-const LOG_FILENAME = 'usage.log';
 
-const LOG_MAX_BYTES = 512 * 1024; // 512KB
 const ERROR_TTL_BASE_MS = 60 * 1000; // 60 seconds
 const RATE_LIMIT_BACKOFF_BASE_MS = 60 * 1000;
 const RATE_LIMIT_BACKOFF_CAP_MS = 5 * 60 * 1000;
@@ -139,25 +137,8 @@ export function writeCache(data: CachedUsage): void {
 
 // --- Log rotation ---
 
-/** Append a one-line usage log entry. Rotates at LOG_MAX_BYTES. */
-export function appendLog(line: string): void {
-  const logPath = path.join(getHudPluginDir(os.homedir()), LOG_FILENAME);
-  try {
-    if (fs.existsSync(logPath)) {
-      const stat = fs.statSync(logPath);
-      if (stat.size > LOG_MAX_BYTES) {
-        const raw = fs.readFileSync(logPath, 'utf-8');
-        const lines = raw.split('\n').filter(Boolean);
-        const keep = lines.slice(-200);
-        fs.writeFileSync(logPath, keep.join('\n') + '\n', { mode: 0o600 });
-      }
-    }
-    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    fs.appendFileSync(logPath, `[${ts}] ${line}\n`, { mode: 0o600 });
-  } catch {
-    // Log failure is non-blocking
-  }
-}
+/** Logging disabled — no-op. */
+export function appendLog(_line: string): void {}
 
 // --- TTL helpers ---
 

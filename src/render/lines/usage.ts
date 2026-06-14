@@ -155,7 +155,7 @@ export function renderDeepSeekUsage(ctx: RenderContext): string {
   const parts: string[] = [];
   parts.push(costStr ? `${costStr}/${balance}` : balance);
   if (weekly) parts.push(weekly);
-  return label(parts.join(' · '), colors);
+  return label(parts.join(' | '), colors);
 }
 
 function formatCompactWindowPart(
