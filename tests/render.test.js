@@ -185,10 +185,13 @@ test('getContextColor and getQuotaColor respect custom semantic overrides', () =
     critical: 'red',
   };
 
-  assert.equal(getContextColor(10, colors), '\x1b[36m');
+  // <65 dim, 65-85 warning, >=85 critical
+  assert.equal(getContextColor(50, colors), '\x1b[2m');
   assert.equal(getContextColor(70, colors), '\x1b[94m');
-  assert.equal(getQuotaColor(25, colors), '\x1b[35m');
-  assert.equal(getQuotaColor(80, colors), '\x1b[33m');
+  assert.equal(getContextColor(90, colors), '\x1b[31m');
+  assert.equal(getQuotaColor(50, colors), '\x1b[2m');
+  assert.equal(getQuotaColor(80, colors), '\x1b[94m');
+  assert.equal(getQuotaColor(90, colors), '\x1b[31m');
 });
 
 test('getContextColor and getQuotaColor resolve 256-color indices', () => {
@@ -200,11 +203,11 @@ test('getContextColor and getQuotaColor resolve 256-color indices', () => {
     critical: 196,
   };
 
-  assert.equal(getContextColor(10, colors), '\x1b[38;5;82m');
+  assert.equal(getContextColor(50, colors), '\x1b[2m');
   assert.equal(getContextColor(70, colors), '\x1b[38;5;220m');
   assert.equal(getContextColor(90, colors), '\x1b[38;5;196m');
-  assert.equal(getQuotaColor(25, colors), '\x1b[38;5;214m');
-  assert.equal(getQuotaColor(80, colors), '\x1b[38;5;97m');
+  assert.equal(getQuotaColor(50, colors), '\x1b[2m');
+  assert.equal(getQuotaColor(80, colors), '\x1b[38;5;220m');
   assert.equal(getQuotaColor(95, colors), '\x1b[38;5;196m');
 });
 
@@ -217,10 +220,10 @@ test('getContextColor and getQuotaColor resolve hex color strings', () => {
     critical: '#ff0000',
   };
 
-  assert.equal(getContextColor(10, colors), '\x1b[38;2;51;255;0m');
+  assert.equal(getContextColor(50, colors), '\x1b[2m');
   assert.equal(getContextColor(70, colors), '\x1b[38;2;255;135;215m');
-  assert.equal(getQuotaColor(25, colors), '\x1b[38;2;255;176;0m');
-  assert.equal(getQuotaColor(80, colors), '\x1b[38;2;175;135;255m');
+  assert.equal(getQuotaColor(50, colors), '\x1b[2m');
+  assert.equal(getQuotaColor(80, colors), '\x1b[38;2;255;135;215m');
 });
 
 test('renderSessionLine includes config counts when present', () => {
@@ -1590,10 +1593,11 @@ test('renderUsageLine uses custom usage palette overrides', () => {
 
   const line = withTerminal(120, () => renderUsageLine(ctx));
   assert.ok(line, 'should render usage line');
-  assert.ok(line.includes('\x1b[36m███'), `expected custom usage bar color, got: ${JSON.stringify(line)}`);
-  assert.ok(line.includes('\x1b[36m25%\x1b[0m'), `expected custom usage percentage color, got: ${JSON.stringify(line)}`);
-  assert.ok(line.includes('\x1b[35m████████'), `expected custom usage warning color, got: ${JSON.stringify(line)}`);
-  assert.ok(line.includes('\x1b[35m80%\x1b[0m'), `expected custom usage warning percentage color, got: ${JSON.stringify(line)}`);
+  // 25% → dim (<65), 80% → warning yellow (65-85)
+  assert.ok(line.includes('\x1b[2m███'), `expected dim usage bar (25%<65), got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[2m25%\x1b[0m'), `expected dim usage percentage (25%), got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[33m████████'), `expected warning usage bar (80% in 65-85), got: ${JSON.stringify(line)}`);
+  assert.ok(line.includes('\x1b[33m80%\x1b[0m'), `expected warning usage percentage (80%), got: ${JSON.stringify(line)}`);
 });
 
 test('renderSessionLine hides usage when showUsage config is false (hybrid toggle)', () => {

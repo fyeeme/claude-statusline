@@ -118,14 +118,14 @@ export function critical(text: string, colors?: Partial<HudColorOverrides>): str
 
 export function getContextColor(percent: number, colors?: Partial<HudColorOverrides>): string {
   if (percent >= 85) return resolveAnsi(colors?.critical, RED);
-  if (percent >= 70) return resolveAnsi(colors?.warning, YELLOW);
-  return resolveAnsi(colors?.context, GREEN);
+  if (percent >= 65) return resolveAnsi(colors?.warning, YELLOW);
+  return DIM;
 }
 
 export function getQuotaColor(percent: number, colors?: Partial<HudColorOverrides>): string {
-  if (percent >= 90) return resolveAnsi(colors?.critical, RED);
-  if (percent >= 75) return resolveAnsi(colors?.usageWarning, BRIGHT_MAGENTA);
-  return resolveAnsi(colors?.usage, BRIGHT_BLUE);
+  if (percent >= 85) return resolveAnsi(colors?.critical, RED);
+  if (percent >= 65) return resolveAnsi(colors?.warning, YELLOW);
+  return DIM;
 }
 
 export function quotaBar(percent: number, width: number = 10, colors?: Partial<HudColorOverrides>): string {
