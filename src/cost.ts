@@ -1,5 +1,6 @@
 import type { SessionTokenUsage, StdinData } from './types.js';
 import { isBedrockModelId, isVertexModelId } from './stdin.js';
+import { findDeepSeekPricing } from './usage/deepseek/pricing.js';
 
 type ModelPricing = {
   inputUsdPerMillion: number;
@@ -37,9 +38,7 @@ const ANTHROPIC_MODEL_PRICING: Array<{ pattern: RegExp; pricing: ModelPricing }>
   { pattern: /\bopusplan\b/i, pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 } },
   { pattern: /\bsonnetplan\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
   { pattern: /\bhaikuplan\b/i, pricing: { inputUsdPerMillion: 0.8, outputUsdPerMillion: 4 } },
-  // DeepSeek 官方定价（CNY / 百万 tokens）。缓存读取按官方比例（缓存命中/缓存未命中）
-  { pattern: /\bdeepseek (?:chat|v3)\b/i, pricing: { inputUsdPerMillion: 1.00, outputUsdPerMillion: 4.00, cacheReadMultiplier: 0.14, cacheWriteMultiplier: 1.0 } },
-  { pattern: /\bdeepseek (?:reasoner|r1)\b/i, pricing: { inputUsdPerMillion: 2.00, outputUsdPerMillion: 6.00, cacheReadMultiplier: 0.14, cacheWriteMultiplier: 1.0 } },
+  // DeepSeek pricing now sourced from usage/deepseek/pricing.ts (auto-detected via findDeepSeekPricing)
 ];
 
 function normalizeModelName(modelName: string): string {
@@ -73,13 +72,20 @@ function getAnthropicPricing(stdin: StdinData): ModelPricing | null {
   ];
 
   for (const candidate of candidates) {
-    if (!candidate) {
-      continue;
-    }
+    if (!candidate) continue;
 
     const pricing = matchAnthropicPricing(candidate);
-    if (pricing) {
-      return pricing;
+    if (pricing) return pricing;
+
+    // Fallback to deepseek pricing (absolute → multiplier)
+    const ds = findDeepSeekPricing(candidate);
+    if (ds) {
+      return {
+        inputUsdPerMillion: ds.input,
+        outputUsdPerMillion: ds.output,
+        cacheReadMultiplier: ds.input > 0 ? ds.cacheRead / ds.input : 0,
+        cacheWriteMultiplier: ds.input > 0 ? ds.cacheWrite / ds.input : 0,
+      };
     }
   }
 

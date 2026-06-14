@@ -147,9 +147,9 @@ export function renderDeepSeekUsage(ctx: RenderContext): string {
   const weekly = usageData.weeklyTokens && usageData.weeklyTokens > 0
     ? `7d:${formatTokenCount(usageData.weeklyTokens)}`
     : '';
-  // DeepSeek 用 estimate（CNY 定价），不用 Claude Code 的 native cost
+  // DeepSeek 用 estimate 定价（不用 Claude Code 的 native cost），币种与余额一致
   const cost = estimateSessionCost(ctx.stdin, ctx.transcript?.sessionTokens);
-  const costStr = cost && cost.totalUsd > 0 ? `¥${cost.totalUsd.toFixed(2)}` : '';
+  const costStr = cost && cost.totalUsd > 0 ? `${balanceSymbol}${cost.totalUsd.toFixed(2)}` : '';
 
   const parts: string[] = [];
   parts.push(costStr ? `${costStr}/${balance}` : balance);

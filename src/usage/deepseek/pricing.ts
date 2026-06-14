@@ -1,0 +1,56 @@
+/**
+ * DeepSeek model pricing (CNY per million tokens).
+ *
+ * cacheRead is the absolute price for cache-hit input tokens;
+ * the multiplier (relative to input) is derived automatically.
+ * cacheWrite=0 means cache creation is free.
+ */
+export interface DeepSeekModelPricing {
+  input: number;
+  output: number;
+  cacheRead: number;  // absolute CNY per 1M cache-hit tokens
+  cacheWrite: number; // absolute CNY per 1M cache-write tokens (0 = free)
+}
+
+export const DEEPSEEK_MODEL_PRICING: Record<string, DeepSeekModelPricing> = {
+  "deepseek-chat": {
+    input: 1.00,
+    output: 4.00,
+    cacheRead: 0.14,
+    cacheWrite: 0,
+  },
+  "deepseek-reasoner": {
+    input: 2.00,
+    output: 6.00,
+    cacheRead: 0.28,
+    cacheWrite: 0,
+  },
+  "deepseek-v4-pro": {
+    input: 0.435,
+    output: 0.87,
+    cacheRead: 0.003625,
+    cacheWrite: 0,
+  },
+  "deepseek-v4-flash": {
+    input: 0.14,
+    output: 0.28,
+    cacheRead: 0.028,
+    cacheWrite: 0,
+  },
+};
+
+/**
+ * Find deepseek model pricing by normalized model id.
+ * The normalized id is lowercased with [._-] → space (same as cost.ts normalizeModelName).
+ * Returns null when no matching entry exists.
+ */
+export function findDeepSeekPricing(modelId: string): DeepSeekModelPricing | null {
+  const normalized = modelId.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  // Direct match
+  if (DEEPSEEK_MODEL_PRICING[normalized]) return DEEPSEEK_MODEL_PRICING[normalized];
+  // Prefix match (e.g. "deepseek chat" matches "deepseek-chat-20250601")
+  for (const [key, pricing] of Object.entries(DEEPSEEK_MODEL_PRICING)) {
+    if (normalized.startsWith(key)) return pricing;
+  }
+  return null;
+}
