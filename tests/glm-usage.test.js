@@ -18,7 +18,7 @@ function createMockDeps(overrides = {}) {
     readCache: () => null,
     writeCache: () => {},
     fetchQuota: async () => ({ fiveHourPct: null, tokensLimitResetTime: null, timeLimitResetTime: null }),
-    fetchFull: async () => ({ fiveHourPct: 25, tokens5h: 50_000_000, tokens7d: 100_000_000, tokensLimitResetTime: null, timeLimitResetTime: null }),
+    fetchFull: async () => ({ fiveHourPct: 25, tokens5h: 50_000_000, tokens7d: 100_000_000, tokensLimitResetTime: null, timeLimitResetTime: null, weeklyPct: 40, weeklyResetTime: NOW + 86400000 }),
     getGlmHeaders: () => ({ 'Authorization': 'test-token', 'Content-Type': 'application/json', 'Accept-Language': 'en-US,en' }),
     now: () => NOW,
     cacheTtlMs: 5 * 60 * 1000,
@@ -127,74 +127,21 @@ describe('getGlmUsage', () => {
     assert.equal(result.sevenDayTokens, 200_000_000);
   });
 
-  it('does full refresh on cache miss', async () => {
+  it('uses API weeklyPct directly on full refresh (no EMA)', async () => {
     let writtenCache = null;
-    let writtenState = null;
     const result = await getGlmUsage(createMockDeps({
       readCache: () => null,
-      fetchFull: async () => ({ fiveHourPct: 20, tokens5h: 100_000_000, tokens7d: 250_000_000, tokensLimitResetTime: null, timeLimitResetTime: null }),
+      fetchFull: async () => ({ fiveHourPct: 20, tokens5h: 100_000_000, tokens7d: 250_000_000, tokensLimitResetTime: null, timeLimitResetTime: null, weeklyPct: 76, weeklyResetTime: NOW + 86400000 }),
       writeCache: (d) => { writtenCache = d; },
-      writeState: (s) => { writtenState = s; },
-      readState: () => makeState({ calibratedLimit7d: null, subscriptionTimeMs: FIXED_SUB_TIME }),
     }));
 
     assert.notEqual(result, null);
     assert.equal(result.fiveHour, 20);
+    assert.equal(result.sevenDay, 76); // weeklyPct direct, no EMA
+    assert.equal(result.sevenDayTokens, 250_000_000);
     assert.equal(result.platform, 'glm');
     assert.notEqual(writtenCache, null);
     assert.equal(writtenCache.isError, false);
-    assert.notEqual(writtenState, null);
-    assert.notEqual(writtenState.calibratedLimit7d, null);
-  });
-
-  it('calibrates with EMA on full refresh', async () => {
-    let writtenState = null;
-    // First call: no prior calibration -> single-point estimate
-    // estimate = 100M * 500 / 20 = 2500M
-    const result = await getGlmUsage(createMockDeps({
-      readCache: () => null,
-      fetchFull: async () => ({ fiveHourPct: 20, tokens5h: 100_000_000, tokens7d: 250_000_000, tokensLimitResetTime: null, timeLimitResetTime: null }),
-      writeState: (s) => { writtenState = s; },
-      readState: () => makeState({ calibratedLimit7d: null }),
-    }));
-
-    assert.notEqual(result, null);
-    assert.equal(writtenState.calibratedLimit7d, 2_500_000_000);
-    // 7d% = 250M / 2500M * 100 = 10
-    assert.equal(result.sevenDay, 10);
-  });
-
-  it('applies monotonic guard within same cycle', async () => {
-    const cycleStart = FIXED_SUB_TIME + Math.floor((NOW - FIXED_SUB_TIME) / CYCLE_MS) * CYCLE_MS;
-    const cached = makeCached({ sevenDay: 30, sevenDayTokens: 150_000_000, sevenDayStartAt: cycleStart, fiveHourFetchedAt: NOW - 200_000, timestamp: NOW - 200_000 });
-
-    // Full refresh returns lower 7d (due to API jitter)
-    const result = await getGlmUsage(createMockDeps({
-      readCache: () => cached,
-      fetchQuota: async () => ({ fiveHourPct: 99, tokensLimitResetTime: null, timeLimitResetTime: null }), // triggers full via milestone
-      fetchFull: async () => ({ fiveHourPct: 25, tokens5h: 50_000_000, tokens7d: 140_000_000, tokensLimitResetTime: null, timeLimitResetTime: null }),
-      readState: () => makeState({ calibratedLimit7d: 500_000_000 }),
-    }));
-
-    // Monotonic guard: 7d should NOT decrease within same cycle
-    assert.ok(result.sevenDay >= 30, `Expected >= 30, got ${result.sevenDay}`);
-  });
-
-  it('allows decrease on cycle change', async () => {
-    const oldCycle = FIXED_SUB_TIME + Math.floor((NOW - FIXED_SUB_TIME) / CYCLE_MS) * CYCLE_MS;
-    const newCycle = oldCycle + CYCLE_MS;
-    const cached = makeCached({ sevenDay: 80, sevenDayTokens: 400_000_000, sevenDayStartAt: oldCycle, fiveHourFetchedAt: NOW - 200_000, timestamp: NOW - 200_000 });
-
-    const result = await getGlmUsage(createMockDeps({
-      readCache: () => cached,
-      fetchQuota: async () => ({ fiveHourPct: 99, tokensLimitResetTime: null, timeLimitResetTime: null }),
-      fetchFull: async () => ({ fiveHourPct: 10, tokens5h: 50_000_000, tokens7d: 20_000_000, tokensLimitResetTime: null, timeLimitResetTime: null }),
-      readState: () => makeState({ calibratedLimit7d: 500_000_000 }),
-      now: () => newCycle + 60_000,
-    }));
-
-    // New cycle: 7d can drop
-    assert.ok(result.sevenDay < 80, `Expected < 80 on new cycle, got ${result.sevenDay}`);
   });
 
   it('returns null + error cache on auth error', async () => {
@@ -243,21 +190,19 @@ describe('getGlmUsage', () => {
     assert.equal(writtenCache.isError, true);
   });
 
-  it('returns null when both fiveHour and sevenDay are null', async () => {
+  it('returns null when both fiveHour and weeklyPct are null', async () => {
     const result = await getGlmUsage(createMockDeps({
       readCache: () => null,
-      fetchFull: async () => ({ fiveHourPct: null, tokens5h: 0, tokens7d: 0, tokensLimitResetTime: null, timeLimitResetTime: null }),
-      readState: () => makeState({ calibratedLimit7d: null }),
+      fetchFull: async () => ({ fiveHourPct: null, tokens5h: 0, tokens7d: 0, tokensLimitResetTime: null, timeLimitResetTime: null, weeklyPct: null, weeklyResetTime: null }),
     }));
 
     assert.equal(result, null);
   });
 
-  it('clamps 7d percentage to 100', async () => {
+  it('clamps weeklyPct to [0, 100] range', async () => {
     const result = await getGlmUsage(createMockDeps({
       readCache: () => null,
-      fetchFull: async () => ({ fiveHourPct: 100, tokens5h: 1_000, tokens7d: 10_000_000, tokensLimitResetTime: null, timeLimitResetTime: null }),
-      readState: () => makeState({ calibratedLimit7d: 500_000_000 }),
+      fetchFull: async () => ({ fiveHourPct: 100, tokens5h: 1_000, tokens7d: 10_000_000, tokensLimitResetTime: null, timeLimitResetTime: null, weeklyPct: 100, weeklyResetTime: NOW + 86400000 }),
     }));
 
     assert.notEqual(result, null);

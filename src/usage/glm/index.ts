@@ -1,14 +1,11 @@
 import type { UsageData, UsagePlatform } from '../../types.js';
 import { detectPlatform, getGlmBaseDomain } from '../../glm-detect.js';
 import { DEFAULT_CONFIG } from '../../config.js';
-import { fetchQuota, fetchFull, getGlmHeaders, formatTimestamp, fetchWithTimeout } from './api.js';
-import { extractTotalTokens } from './api.js';
-import { updateCalibration, inferSubscriptionTime, computeCycleStart } from './calibration.js';
-import { compute7d, applyMonotonicGuard } from './compute.js';
+import { fetchQuota, fetchFull, getGlmHeaders, formatTimestamp } from './api.js';
+import { computeCycleStart } from './calibration.js';
 import { readState, writeState, readCache, writeCache, appendLog, getErrorTtlMs, getRateLimitedTtlMs, migrateOldCache } from './cache.js';
 import type { CalibrationState, FetchedData, QuotaData, CachedUsage } from './types.js';
 import { GlmAuthError, GlmRetryableError } from './types.js';
-import type { ModelUsageResponse } from './api.js';
 
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 const MIN_TOKENS_FOR_7D = 1000;
@@ -143,89 +140,31 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     return null;
   }
 
-  const state = deps.readState();
-  const cycleStart = state?.subscriptionTimeMs != null
-    ? computeCycleStart(state.subscriptionTimeMs, nowMs) : undefined;
-
-  deps.appendLog(`cache=MISS cycle=${cycleStart != null ? new Date(cycleStart).toISOString().slice(5, 16) : 'null'} subMs=${state?.subscriptionTimeMs ?? '-'}`);
+  deps.appendLog(`cache=MISS`);
 
   try {
-    let fetched = await deps.fetchFull(baseDomain, headers, cycleStart);
+    const fetched = await deps.fetchFull(baseDomain, headers);
+    const tokens7d = fetched.tokens7d;
 
-    // Subscription time inference
-    let subTime = state?.subscriptionTimeMs;
-    if (subTime == null && fetched.timeLimitResetTime != null) {
-      subTime = inferSubscriptionTime(fetched.timeLimitResetTime);
-    }
-    const effectiveCycleStart = subTime != null ? computeCycleStart(subTime, nowMs) : undefined;
-
-    // Re-query 7d if calibration was lost (cycleStart was null) and correct start differs from now-7d
-    let tokens7d = fetched.tokens7d;
-    if (cycleStart == null && effectiveCycleStart != null) {
-      const cycleAgeDays = (nowMs - effectiveCycleStart) / (24 * 60 * 60 * 1000);
-      if (cycleAgeDays < 6 && tokens7d > 0) {
-        const start7d = new Date(effectiveCycleStart);
-        const end = new Date(nowMs);
-        const url = `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(start7d))}&endTime=${encodeURIComponent(formatTimestamp(end))}`;
-        try {
-          const res = await fetchWithTimeout(url, headers);
-          if (res.ok) {
-            const json: ModelUsageResponse = await res.json();
-            const reQueryTokens = extractTotalTokens(json?.data);
-            if (reQueryTokens >= 0) {
-              deps.appendLog(`requery old=${Math.floor(tokens7d / 1e6)}M new=${Math.floor(reQueryTokens / 1e6)}M`);
-              tokens7d = reQueryTokens;
-              fetched = { ...fetched, tokens7d };
-            }
-          }
-        } catch { /* keep original tokens7d */ }
-      }
-    }
-
-    // Calibrate (EMA)
-    const calibrated = updateCalibration(fetched.tokens5h, fetched.fiveHourPct ?? 0, state, nowMs, deps.appendLog);
-    // Preserve subscription time in state
-    const newState: CalibrationState = {
-      calibratedLimit7d: calibrated.calibratedLimit7d,
-      calibratedAt: calibrated.calibratedAt,
-      subscriptionTimeMs: subTime ?? calibrated.subscriptionTimeMs ?? null,
-    };
-
-    // Compute 7d%
-    let sevenDay: number | null = null;
+    // 7d% from API weekly percentage (unit:6) — no EMA calibration
+    let sevenDay: number | null = fetched.weeklyPct ?? null;
     let sevenDayTokens: number | undefined;
-    // Only use EMA-calibrated limit. When null, 7d% is not displayed —
-    // avoids wildly unstable single-point estimates at low 5h%.
-    const effectiveLimit = newState.calibratedLimit7d;
-
-    if (effectiveCycleStart != null && effectiveLimit != null && effectiveLimit > 0 && tokens7d >= MIN_TOKENS_FOR_7D) {
-      sevenDay = compute7d(tokens7d, effectiveLimit);
+    if (sevenDay != null && tokens7d >= MIN_TOKENS_FOR_7D) {
       sevenDayTokens = tokens7d;
     }
 
     if (fetched.fiveHourPct === null && sevenDay === null) return null;
 
-    // Monotonic guard
-    const sameCycle = cached?.sevenDayStartAt != null && effectiveCycleStart != null
-      && cached.sevenDayStartAt === effectiveCycleStart;
-    const guarded = applyMonotonicGuard(
-      sevenDay, sevenDayTokens,
-      cached?.sevenDay ?? null, cached?.sevenDayTokens,
-      sameCycle,
-    );
-
-    const sevenDayStartAt = effectiveCycleStart ?? null;
-    const sevenDayResetAt = effectiveCycleStart != null ? effectiveCycleStart + 7 * 24 * 60 * 60 * 1000 : null;
+    const sevenDayResetAt = fetched.weeklyResetTime ?? null;
+    const sevenDayStartAt = sevenDayResetAt != null ? sevenDayResetAt - 7 * 24 * 60 * 60 * 1000 : null;
     const fiveHourResetAt = fetched.tokensLimitResetTime ?? null;
     const fiveHourStartAt = fiveHourResetAt != null ? fiveHourResetAt - FIVE_HOUR_MS : null;
 
-    // Persist
-    deps.writeState(newState);
     deps.writeCache({
       platform: 'glm',
       fiveHour: fetched.fiveHourPct,
-      sevenDay: guarded.sevenDay,
-      sevenDayTokens: guarded.sevenDayTokens,
+      sevenDay,
+      sevenDayTokens,
       fiveHourFetchedAt: nowMs,
       fiveHourStartAt,
       fiveHourResetAt,
@@ -238,41 +177,20 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       sevenDayWindowType: 'cycle',
     });
 
-    const limitM = newState.calibratedLimit7d ? Math.floor(newState.calibratedLimit7d / 1e6) : 0;
-    const prevLimit = state?.calibratedLimit7d;
-    const newLimit = newState.calibratedLimit7d;
     const t5hM = Math.floor(fetched.tokens5h / 1e6);
-    const pct = fetched.fiveHourPct ?? 0;
-    const estimate = (pct > 0 && fetched.tokens5h > 0) ? Math.floor((fetched.tokens5h * 500 / pct) / 1e6) : 0;
-    const prevLimitM = prevLimit ? Math.floor(prevLimit / 1e6) : 0;
-    let calibTag: string;
-    if (newLimit != null) {
-      if (prevLimit == null) {
-        calibTag = `single:${estimate}M`;
-      } else if (newLimit !== prevLimit) {
-        calibTag = `ema:0.2*${estimate}M+0.8*${prevLimitM}M=${limitM}M`;
-      } else {
-        calibTag = 'preserved';
-      }
-    } else {
-      calibTag = 'none';
-    }
-    const t5h = fetched.tokens5h;
-    const t7d = tokens7d;
-    const elM = effectiveLimit ? Math.floor(effectiveLimit / 1e6) : 0;
-    deps.appendLog(`api 5h=${fetched.fiveHourPct ?? '-'}%(${t5h != null ? Math.floor(t5h / 1e6) : '-'}M) 7d=${guarded.sevenDay ?? '-'}%(${guarded.sevenDayTokens ? Math.floor(guarded.sevenDayTokens / 1e6) : '-'}M/${elM}M) limit=${limitM}M(${calibTag}) cycle=${sevenDayStartAt != null ? new Date(sevenDayStartAt).toISOString().slice(5, 16) : '-'}`);
+    deps.appendLog(`api 5h=${fetched.fiveHourPct ?? '-'}%(${t5hM}M) 7d=${sevenDay ?? '-'}%(${sevenDayTokens ? Math.floor(sevenDayTokens / 1e6) : '-'}M) reset=${sevenDayResetAt != null ? new Date(sevenDayResetAt).toISOString().slice(5, 16) : '-'}`);
 
     return {
       fiveHour: fetched.fiveHourPct,
-      sevenDay: guarded.sevenDay,
+      sevenDay,
       fiveHourStartAt: fiveHourStartAt != null ? new Date(fiveHourStartAt) : null,
       fiveHourResetAt: fiveHourResetAt != null ? new Date(fiveHourResetAt) : null,
       sevenDayStartAt: sevenDayStartAt != null ? new Date(sevenDayStartAt) : null,
       sevenDayResetAt: sevenDayResetAt != null ? new Date(sevenDayResetAt) : null,
       fiveHourWindowType: 'cycle',
-      sevenDayWindowType: guarded.sevenDay !== null ? 'cycle' : undefined,
+      sevenDayWindowType: sevenDay !== null ? 'cycle' : undefined,
       platform: 'glm',
-      sevenDayTokens: guarded.sevenDayTokens,
+      sevenDayTokens,
     };
   } catch (err) {
     const isAuth = (err as Error)?.name === 'GlmAuthError';
