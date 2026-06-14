@@ -22,6 +22,7 @@ const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 
 interface QuotaLimit {
   type: string;
+  unit?: number;
   percentage?: number;
   nextResetTime?: number;
 }
@@ -139,20 +140,35 @@ function parseQuotaResponse(quotaRes: Response): Promise<{
   fiveHourPct: number | null;
   tokensLimitResetTime: number | null;
   timeLimitResetTime: number | null;
+  weeklyPct: number | null;
+  weeklyResetTime: number | null;
 }> {
   return quotaRes.json().then((quotaJson: QuotaResponse) => {
     let fiveHourPct: number | null = null;
     let tokensLimitResetTime: number | null = null;
     let timeLimitResetTime: number | null = null;
+    let weeklyPct: number | null = null;
+    let weeklyResetTime: number | null = null;
 
     const limits = quotaJson?.data?.limits;
     if (Array.isArray(limits)) {
-      const tokensLimit = limits.find((l) => l.type === 'TOKENS_LIMIT');
-      if (tokensLimit && typeof tokensLimit.percentage === 'number' && Number.isFinite(tokensLimit.percentage)) {
-        fiveHourPct = clamp(Math.round(tokensLimit.percentage), 0, 100);
+      // unit:3 = 5-hour rolling, unit:6 = weekly. Fallback to first TOKENS_LIMIT when unit absent.
+      const fiveHourLimit = limits.find((l) => l.type === 'TOKENS_LIMIT' && l.unit === 3)
+        ?? limits.find((l) => l.type === 'TOKENS_LIMIT');
+      const weeklyLimit = limits.find((l) => l.type === 'TOKENS_LIMIT' && l.unit === 6);
+      if (fiveHourLimit && typeof fiveHourLimit.percentage === 'number' && Number.isFinite(fiveHourLimit.percentage)) {
+        fiveHourPct = clamp(Math.round(fiveHourLimit.percentage), 0, 100);
       }
-      if (tokensLimit && typeof tokensLimit.nextResetTime === 'number' && Number.isFinite(tokensLimit.nextResetTime)) {
-        tokensLimitResetTime = tokensLimit.nextResetTime;
+      if (fiveHourLimit && typeof fiveHourLimit.nextResetTime === 'number' && Number.isFinite(fiveHourLimit.nextResetTime)) {
+        tokensLimitResetTime = fiveHourLimit.nextResetTime;
+      }
+      if (weeklyLimit) {
+        if (typeof weeklyLimit.percentage === 'number' && Number.isFinite(weeklyLimit.percentage)) {
+          weeklyPct = clamp(Math.round(weeklyLimit.percentage), 0, 100);
+        }
+        if (typeof weeklyLimit.nextResetTime === 'number' && Number.isFinite(weeklyLimit.nextResetTime)) {
+          weeklyResetTime = weeklyLimit.nextResetTime;
+        }
       }
       const timeLimit = limits.find((l) => l.type === 'TIME_LIMIT');
       if (timeLimit && typeof timeLimit.nextResetTime === 'number' && Number.isFinite(timeLimit.nextResetTime)) {
@@ -160,11 +176,13 @@ function parseQuotaResponse(quotaRes: Response): Promise<{
       }
     }
 
-    return { fiveHourPct, tokensLimitResetTime, timeLimitResetTime };
+    return { fiveHourPct, tokensLimitResetTime, timeLimitResetTime, weeklyPct, weeklyResetTime };
   }).catch(() => ({
     fiveHourPct: null as number | null,
     tokensLimitResetTime: null as number | null,
     timeLimitResetTime: null as number | null,
+    weeklyPct: null as number | null,
+    weeklyResetTime: null as number | null,
   }));
 }
 
@@ -228,7 +246,7 @@ export async function fetchFull(
   }
 
   // Parse quota response
-  const { fiveHourPct, tokensLimitResetTime, timeLimitResetTime } = await parseQuotaResponse(quotaRes);
+  const { fiveHourPct, tokensLimitResetTime, timeLimitResetTime, weeklyPct, weeklyResetTime } = await parseQuotaResponse(quotaRes);
 
   // Phase 2: fetch exact 5h window using TOKENS_LIMIT.nextResetTime
   let tokens5h = 0;
@@ -263,5 +281,7 @@ export async function fetchFull(
     tokens7d,
     tokensLimitResetTime,
     timeLimitResetTime,
+    weeklyPct,
+    weeklyResetTime,
   };
 }

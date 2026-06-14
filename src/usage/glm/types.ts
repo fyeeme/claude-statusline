@@ -15,6 +15,8 @@ export interface FetchedData {
   tokens7d: number;
   tokensLimitResetTime: number | null;
   timeLimitResetTime: number | null;
+  weeklyPct: number | null;
+  weeklyResetTime: number | null;
 }
 
 /** Result from lightweight quota-only fetch */
@@ -22,6 +24,8 @@ export interface QuotaData {
   fiveHourPct: number | null;
   tokensLimitResetTime: number | null;
   timeLimitResetTime: number | null;
+  weeklyPct: number | null;
+  weeklyResetTime: number | null;
 }
 
 /** Transient cached usage data — TTL-controlled, stored in .usage-cache.json */
