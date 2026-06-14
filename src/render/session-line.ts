@@ -250,23 +250,14 @@ export function renderSessionLine(ctx: RenderContext): string {
     }
   }
 
-  // Session token usage (cumulative)
+  // Session token usage (cumulative, compact folded form)
   if (display?.showSessionTokens && ctx.transcript.sessionTokens) {
     const st = ctx.transcript.sessionTokens;
     const total = st.inputTokens + st.outputTokens + st.cacheCreationTokens + st.cacheReadTokens;
     if (total > 0) {
-      const tokenParts: string[] = [
-        `${t('format.in')}: ${formatTokens(st.inputTokens)}`,
-        `${t('format.out')}: ${formatTokens(st.outputTokens)}`,
-      ];
-      if (st.cacheCreationTokens > 0 || st.cacheReadTokens > 0) {
-        tokenParts.push(`${t('format.cache')}: ${formatTokens(st.cacheCreationTokens + st.cacheReadTokens)}`);
-      }
       const cacheHitRate = calcCacheHitRate(st.inputTokens, st.cacheCreationTokens, st.cacheReadTokens);
-      if (cacheHitRate !== null) {
-        tokenParts.push(`${t('format.cacheHit')}: ${cacheHitRate}%`);
-      }
-      parts.push(label(`tok: ${formatTokens(total)} (${tokenParts.join(', ')})`, colors));
+      const hitSuffix = cacheHitRate !== null ? ` ${cacheHitRate}%` : '';
+      parts.push(label(`tok ${formatTokens(total)}${hitSuffix}`, colors));
     }
   }
 

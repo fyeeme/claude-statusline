@@ -51,5 +51,5 @@ export function renderSessionTokensLine(ctx: RenderContext): string | null {
     parts.push(`${t('format.cacheHit')}: ${cacheHitRate}%`);
   }
 
-  return label(`Tokens ${formatTokens(total)} (${parts.join(', ')})`, colors);
+  return label(`Tokens ${formatTokens(total)} (${parts.join(' · ')})`, colors);
 }

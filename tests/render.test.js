@@ -2110,7 +2110,7 @@ test('renderSessionTokensLine renders cumulative session token totals', () => {
   };
 
   const line = stripAnsi(renderSessionTokensLine(ctx) ?? '');
-  assert.equal(line, 'Tokens 12.8M (in: 7k, out: 28k, cache: 12.8M)');
+  assert.equal(line, 'Tokens 12.8M (in: 7k · out: 28k · cache: 12.8M)');
 });
 
 test('renderSessionLine includes compact session token summary when enabled', () => {
@@ -2124,7 +2124,21 @@ test('renderSessionLine includes compact session token summary when enabled', ()
   };
 
   const line = stripAnsi(renderSessionLine(ctx));
-  assert.ok(line.includes('tok: 2k (in: 2k, out: 250)'), 'should include compact token summary');
+  assert.ok(line.includes('tok 2k'), 'should include compact token summary without hit rate when cache is empty');
+});
+
+test('renderSessionLine folds compact token summary with hit rate when cache read exists', () => {
+  const ctx = baseContext();
+  ctx.config.display.showSessionTokens = true;
+  ctx.transcript.sessionTokens = {
+    inputTokens: 1000,
+    outputTokens: 100,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 99000,
+  };
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('tok 100k'), `should include total: ${line}`);
+  assert.ok(/\d+%/.test(line), `should include hit rate percent: ${line}`);
 });
 
 // ---------------------------------------------------------------------------
