@@ -1,4 +1,4 @@
-import type { UsageData, UsagePlatform } from '../../types.js';
+import type { UsageData, UsagePlatform, UsageWindowType } from '../../types.js';
 import { detectPlatform, getGlmBaseDomain } from '../../glm-detect.js';
 import { DEFAULT_CONFIG } from '../../config.js';
 import { fetchQuota, fetchFull, getGlmHeaders, formatTimestamp } from './api.js';
@@ -149,11 +149,16 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
     // 7d% from API weekly percentage (unit:6) — no EMA calibration
     let sevenDay: number | null = fetched.weeklyPct ?? null;
     let sevenDayTokens: number | undefined;
+    let sevenDayWindowType: UsageWindowType = 'cycle';
     if (sevenDay != null && tokens7d >= MIN_TOKENS_FOR_7D) {
       sevenDayTokens = tokens7d;
+    } else if (sevenDay === null && tokens7d >= MIN_TOKENS_FOR_7D) {
+      // 无 unit:6 周限额 → 退化为自然周 token（七Day=null，显示累计 token）
+      sevenDayTokens = tokens7d;
+      sevenDayWindowType = 'rolling';
     }
 
-    if (fetched.fiveHourPct === null && sevenDay === null) return null;
+    if (fetched.fiveHourPct === null && sevenDay === null && sevenDayTokens === undefined) return null;
 
     const sevenDayResetAt = fetched.weeklyResetTime ?? null;
     const sevenDayStartAt = sevenDayResetAt != null ? sevenDayResetAt - 7 * 24 * 60 * 60 * 1000 : null;
@@ -174,7 +179,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       ttlMs: deps.cacheTtlMs,
       isError: false,
       fiveHourWindowType: 'cycle',
-      sevenDayWindowType: 'cycle',
+      sevenDayWindowType,
     });
 
     const t5hM = Math.floor(fetched.tokens5h / 1e6);
@@ -188,7 +193,7 @@ export async function getGlmUsage(overrides?: Partial<GlmUsageDeps>): Promise<Us
       sevenDayStartAt: sevenDayStartAt != null ? new Date(sevenDayStartAt) : null,
       sevenDayResetAt: sevenDayResetAt != null ? new Date(sevenDayResetAt) : null,
       fiveHourWindowType: 'cycle',
-      sevenDayWindowType: sevenDay !== null ? 'cycle' : undefined,
+      sevenDayWindowType: sevenDay !== null ? 'cycle' : (sevenDayTokens !== undefined ? 'rolling' : undefined),
       platform: 'glm',
       sevenDayTokens,
     };
