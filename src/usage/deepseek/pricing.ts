@@ -12,18 +12,6 @@ export interface DeepSeekModelPricing {
 }
 
 export const DEEPSEEK_MODEL_PRICING: Record<string, DeepSeekModelPricing> = {
-  "deepseek-chat": {
-    input: 0.14,
-    output: 0.57,
-    cacheRead: 0.02,
-    cacheWrite: 0,
-  },
-  "deepseek-reasoner": {
-    input: 0.29,
-    output: 0.86,
-    cacheRead: 0.04,
-    cacheWrite: 0,
-  },
   "deepseek-v4-pro": {
     input: 0.435,
     output: 0.87,
