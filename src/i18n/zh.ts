@@ -23,6 +23,7 @@ export const zh: Messages = {
   "format.at": "",
   "format.in": "输入",
   "format.cache": "缓存",
+  "format.cacheHit": "命中",
   "format.out": "输出",
   "format.tokPerSec": "tok/s",
 

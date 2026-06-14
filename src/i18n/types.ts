@@ -19,6 +19,7 @@ export type MessageKey =
   | "format.at"
   | "format.in"
   | "format.cache"
+  | "format.cacheHit"
   | "format.out"
   | "format.tokPerSec"
   // Init

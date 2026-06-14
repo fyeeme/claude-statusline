@@ -23,6 +23,7 @@ export const en: Messages = {
   "format.at": "at",
   "format.in": "in",
   "format.cache": "cache",
+  "format.cacheHit": "hit",
   "format.out": "out",
   "format.tokPerSec": "tok/s",
 
