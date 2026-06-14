@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getDeepSeekUsage, getProjectSessionsDir } from '../dist/usage/deepseek/index.js';
 import { getWeekStartMs } from '../dist/usage/deepseek/api.js';
+import { getUsage } from '../dist/usage/index.js';
 
 const baseDeps = (overrides = {}) => ({
   getApiKey: () => 'sk-test',
@@ -94,4 +95,26 @@ test('getWeekStartMs returns Monday 00:00 UTC', () => {
   const monday = new Date(weekStart);
   assert.equal(monday.getUTCDay(), 1, 'should be Monday');
   assert.equal(monday.getUTCDate(), 8, 'should be June 8');
+});
+
+test('getUsage routes to deepseek provider when BASE_URL is deepseek', async () => {
+  const savedUrl = process.env.ANTHROPIC_BASE_URL;
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com';
+  process.env.ANTHROPIC_API_KEY = 'sk-test';
+  try {
+    const result = await getUsage({ cwd: '/tmp/p' }, {
+      deepseek: {
+        fetchBalance: async () => ({ totalBalance: '50.00', currency: 'CNY' }),
+        scanWeeklyTokens: () => 0,
+        readCache: () => null,
+        writeCache: () => {},
+      },
+    });
+    assert.equal(result?.platform, 'deepseek');
+    assert.equal(result?.balance, '50.00');
+  } finally {
+    if (savedUrl === undefined) delete process.env.ANTHROPIC_BASE_URL; else process.env.ANTHROPIC_BASE_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedKey;
+  }
 });

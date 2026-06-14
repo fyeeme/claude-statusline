@@ -1,15 +1,20 @@
 import { detectPlatform } from '../glm-detect.js';
 import { getGlmUsage } from './glm/index.js';
+import { getDeepSeekUsage } from './deepseek/index.js';
 import { getUsageFromStdin } from './claude/index.js';
 import type { StdinData, UsageData } from '../types.js';
 import type { GlmUsageDeps } from './glm/index.js';
+import type { DeepSeekUsageDeps } from './deepseek/index.js';
 
 export type { GlmUsageDeps } from './glm/index.js';
+export type { DeepSeekUsageDeps } from './deepseek/index.js';
 export { getUsageFromStdin } from './claude/index.js';
 
 export type UsageStrategyDeps = {
   /** GLM-specific dependency overrides (for testing) */
   glm?: Partial<GlmUsageDeps>;
+  /** DeepSeek-specific dependency overrides (for testing) */
+  deepseek?: Partial<DeepSeekUsageDeps>;
 };
 
 /**
@@ -30,6 +35,10 @@ export async function getUsage(
   if (platform === 'anthropic') {
     if (!stdin) return null;
     return getUsageFromStdin(stdin);
+  }
+
+  if (platform === 'deepseek') {
+    return getDeepSeekUsage(stdin, deps.deepseek);
   }
 
   // platform === 'glm'
