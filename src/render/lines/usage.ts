@@ -147,10 +147,10 @@ export function renderDeepSeekUsage(ctx: RenderContext): string {
   const weekly = usageData.weeklyTokens && usageData.weeklyTokens > 0
     ? `7d:${formatTokenCount(usageData.weeklyTokens)}`
     : '';
-  // DeepSeek 用 estimate 定价（USD），按余额币种换算（CNY ×7，USD 不变）
+  // DeepSeek 用 estimate 定价（USD），按余额币种换算（CNY ÷7，USD 不变）
   const cost = estimateSessionCost(ctx.stdin, ctx.transcript?.sessionTokens);
   const exchangeRate = usageData.currency === 'CNY' ? 7 : 1;
-  const costStr = cost && cost.totalUsd > 0 ? `${balanceSymbol}${(cost.totalUsd * exchangeRate).toFixed(2)}` : '';
+  const costStr = cost && cost.totalUsd > 0 ? `${balanceSymbol}${(cost.totalUsd / exchangeRate).toFixed(2)}` : '';
 
   const parts: string[] = [];
   parts.push(costStr ? `${costStr}/${balance}` : balance);
