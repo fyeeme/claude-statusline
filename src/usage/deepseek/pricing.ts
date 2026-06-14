@@ -32,12 +32,11 @@ export const DEEPSEEK_MODEL_PRICING: Record<string, DeepSeekModelPricing> = {
  * Returns null when no matching entry exists.
  */
 export function findDeepSeekPricing(modelId: string): DeepSeekModelPricing | null {
-  const normalized = modelId.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
-  // Direct match
-  if (DEEPSEEK_MODEL_PRICING[normalized]) return DEEPSEEK_MODEL_PRICING[normalized];
-  // Prefix match (e.g. "deepseek chat" matches "deepseek-chat-20250601")
+  const normId = modelId.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  // Match by normalized key (both sides go through the same normalization)
   for (const [key, pricing] of Object.entries(DEEPSEEK_MODEL_PRICING)) {
-    if (normalized.startsWith(key)) return pricing;
+    const normKey = key.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (normId === normKey || normId.startsWith(normKey)) return pricing;
   }
   return null;
 }
