@@ -309,7 +309,7 @@ export function renderSessionLine(ctx: RenderContext): string {
     if (usage) {
       const input = formatTokens(usage.input_tokens ?? 0);
       const cache = formatTokens((usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0));
-      line += label(` (${t('format.in')}: ${input}, ${t('format.cache')}: ${cache})`, colors);
+      line += label(` (${t('format.in')}: ${input} · ${t('format.cache')}: ${cache})`, colors);
     }
   }
 

@@ -31,7 +31,10 @@ export function renderIdentityLine(
   const display = ctx.config?.display;
   const contextValueMode = display?.contextValue ?? "percent";
   const contextValue = formatContextValue(ctx, percent, contextValueMode);
-  const contextValueDisplay = `${getContextColor(percent, colors)}${contextValue}${RESET}`;
+  const contextSize = ctx.stdin.context_window?.context_window_size ?? 0;
+  const contextValueDisplay = contextSize > 0
+    ? `${getContextColor(percent, colors)}${contextValue}${RESET}`
+    : label("--", colors);
 
   let line =
     display?.showContextBar !== false
@@ -47,7 +50,7 @@ export function renderIdentityLine(
           (usage.cache_read_input_tokens ?? 0),
       );
       line += label(
-        ` (${t("format.in")}: ${input}, ${t("format.cache")}: ${cache})`,
+        ` (${t("format.in")}: ${input} · ${t("format.cache")}: ${cache})`,
         colors,
       );
     }

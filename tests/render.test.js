@@ -1137,6 +1137,31 @@ test('renderIdentityLine translates labels when Chinese is enabled', () => {
   }
 });
 
+test('renderIdentityLine omits bar and shows both value when showContextBar is false', () => {
+  const ctx = baseContext();
+  ctx.config.display.showContextBar = false;
+  ctx.config.display.contextValue = 'both';
+  const line = stripAnsi(renderIdentityLine(ctx));
+  assert.ok(!line.includes('█'), `should not render bar: ${line}`);
+  assert.ok(line.includes('5% (10k/200k)'), `should show both value: ${line}`);
+});
+
+test('renderIdentityLine renders -- when context window size is missing', () => {
+  const ctx = baseContext();
+  ctx.stdin.context_window = { context_window_size: 0, current_usage: { input_tokens: 0 } };
+  const line = stripAnsi(renderIdentityLine(ctx));
+  assert.ok(line.includes('--'), `should render -- for missing size: ${line}`);
+  assert.ok(!line.includes('0%'), `should not render misleading 0%: ${line}`);
+});
+
+test('renderIdentityLine uses · separator in 85% token breakdown', () => {
+  const ctx = baseContext();
+  ctx.config.display.showContextBar = false;
+  ctx.stdin.context_window = { context_window_size: 200000, current_usage: { input_tokens: 180000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } };
+  const line = stripAnsi(renderIdentityLine(ctx));
+  assert.ok(line.includes('·'), `breakdown should use · separator: ${line}`);
+});
+
 test('renderUsageLine translates labels when Chinese is enabled', () => {
   const ctx = baseContext();
   ctx.usageData = {
