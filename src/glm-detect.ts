@@ -7,6 +7,11 @@ const GLM_DOMAINS = [
   'dev.bigmodel.cn',
 ];
 
+/** Known DeepSeek API hostnames */
+const DEEPSEEK_DOMAINS = [
+  'api.deepseek.com',
+];
+
 /**
  * Detect the subscription platform from ANTHROPIC_BASE_URL.
  *
@@ -29,6 +34,12 @@ export function detectPlatform(baseUrl?: string): UsagePlatform {
   for (const domain of GLM_DOMAINS) {
     if (hostname === domain || hostname.endsWith('.' + domain)) {
       return 'glm';
+    }
+  }
+
+  for (const domain of DEEPSEEK_DOMAINS) {
+    if (hostname === domain || hostname.endsWith('.' + domain)) {
+      return 'deepseek';
     }
   }
 

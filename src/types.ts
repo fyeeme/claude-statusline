@@ -70,7 +70,7 @@ export interface TodoItem {
 export type UsageWindowType = 'fixed' | 'rolling' | 'cycle';
 
 /** Platform that provides usage data */
-export type UsagePlatform = 'anthropic' | 'glm';
+export type UsagePlatform = 'anthropic' | 'glm' | 'deepseek';
 
 export interface UsageData {
   fiveHour: number | null;  // 0-100 percentage, null if unavailable
@@ -88,6 +88,14 @@ export interface UsageData {
   /** 7-day total token count (GLM only, for display context) */
   sevenDayTokens?: number;
   fiveHourTokens?: number;
+  /** DeepSeek: account balance (absolute, e.g. "50.00") */
+  balance?: string;
+  /** DeepSeek: balance currency (e.g. "CNY") */
+  currency?: string;
+  /** DeepSeek: natural-week cumulative tokens (when no weekly quota limit) */
+  weeklyTokens?: number;
+  /** DeepSeek: estimated current-session cost in USD */
+  sessionCostUsd?: number;
 }
 
 export interface ExternalUsageSnapshot {

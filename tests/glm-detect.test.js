@@ -33,6 +33,14 @@ describe('detectPlatform', () => {
     assert.equal(detectPlatform('https://custom.api.z.ai'), 'glm');
   });
 
+  it('detects api.deepseek.com as DeepSeek', () => {
+    assert.equal(detectPlatform('https://api.deepseek.com'), 'deepseek');
+  });
+
+  it('detects api.deepseek.com with path as DeepSeek', () => {
+    assert.equal(detectPlatform('https://api.deepseek.com/v1'), 'deepseek');
+  });
+
   it('detects api.anthropic.com as Anthropic', () => {
     assert.equal(detectPlatform('https://api.anthropic.com'), 'anthropic');
   });
