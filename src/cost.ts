@@ -4,6 +4,10 @@ import { isBedrockModelId, isVertexModelId } from './stdin.js';
 type ModelPricing = {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  /** Cache read multiplier (default CACHE_READ_MULTIPLIER). deepseek: 0.14 */
+  cacheReadMultiplier?: number;
+  /** Cache write multiplier (default CACHE_WRITE_MULTIPLIER). deepseek: 1.0 */
+  cacheWriteMultiplier?: number;
 };
 
 export interface SessionCostEstimate {
@@ -33,9 +37,9 @@ const ANTHROPIC_MODEL_PRICING: Array<{ pattern: RegExp; pricing: ModelPricing }>
   { pattern: /\bopusplan\b/i, pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 } },
   { pattern: /\bsonnetplan\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
   { pattern: /\bhaikuplan\b/i, pricing: { inputUsdPerMillion: 0.8, outputUsdPerMillion: 4 } },
-  // DeepSeek 官方定价（CNY / 百万 tokens）
-  { pattern: /\bdeepseek (?:chat|v3)\b/i, pricing: { inputUsdPerMillion: 1.00, outputUsdPerMillion: 4.00 } },
-  { pattern: /\bdeepseek (?:reasoner|r1)\b/i, pricing: { inputUsdPerMillion: 2.00, outputUsdPerMillion: 6.00 } },
+  // DeepSeek 官方定价（CNY / 百万 tokens）。缓存读取按官方比例（缓存命中/缓存未命中）
+  { pattern: /\bdeepseek (?:chat|v3)\b/i, pricing: { inputUsdPerMillion: 1.00, outputUsdPerMillion: 4.00, cacheReadMultiplier: 0.14, cacheWriteMultiplier: 1.0 } },
+  { pattern: /\bdeepseek (?:reasoner|r1)\b/i, pricing: { inputUsdPerMillion: 2.00, outputUsdPerMillion: 6.00, cacheReadMultiplier: 0.14, cacheWriteMultiplier: 1.0 } },
 ];
 
 function normalizeModelName(modelName: string): string {
@@ -112,8 +116,10 @@ export function estimateSessionCost(
   }
 
   const inputUsd = calculateUsd(sessionTokens.inputTokens, pricing.inputUsdPerMillion);
-  const cacheCreationUsd = calculateUsd(sessionTokens.cacheCreationTokens, pricing.inputUsdPerMillion * CACHE_WRITE_MULTIPLIER);
-  const cacheReadUsd = calculateUsd(sessionTokens.cacheReadTokens, pricing.inputUsdPerMillion * CACHE_READ_MULTIPLIER);
+  const cacheWriteMult = pricing.cacheWriteMultiplier ?? CACHE_WRITE_MULTIPLIER;
+  const cacheReadMult = pricing.cacheReadMultiplier ?? CACHE_READ_MULTIPLIER;
+  const cacheCreationUsd = calculateUsd(sessionTokens.cacheCreationTokens, pricing.inputUsdPerMillion * cacheWriteMult);
+  const cacheReadUsd = calculateUsd(sessionTokens.cacheReadTokens, pricing.inputUsdPerMillion * cacheReadMult);
   const outputUsd = calculateUsd(sessionTokens.outputTokens, pricing.outputUsdPerMillion);
 
   return {
