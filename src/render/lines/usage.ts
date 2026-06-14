@@ -9,7 +9,7 @@ import { progressLabel } from "./label-align.js";
 import type { TimeFormatMode } from "../../config.js";
 import { formatResetTime } from "../format-reset-time.js";
 import { formatTokenCount } from "../../usage/glm/api.js";
-import { resolveSessionCost, formatUsd } from "../../cost.js";
+import { estimateSessionCost } from "../../cost.js";
 
 export function renderUsageLine(
   ctx: RenderContext,
@@ -147,8 +147,9 @@ export function renderDeepSeekUsage(ctx: RenderContext): string {
   const weekly = usageData.weeklyTokens && usageData.weeklyTokens > 0
     ? `7d:${formatTokenCount(usageData.weeklyTokens)}`
     : '';
-  const cost = resolveSessionCost(ctx.stdin, ctx.transcript?.sessionTokens);
-  const costStr = cost && cost.totalUsd > 0 ? formatUsd(cost.totalUsd) : '';
+  // DeepSeek 用 estimate（CNY 定价），不用 Claude Code 的 native cost
+  const cost = estimateSessionCost(ctx.stdin, ctx.transcript?.sessionTokens);
+  const costStr = cost && cost.totalUsd > 0 ? `¥${cost.totalUsd.toFixed(2)}` : '';
 
   const parts: string[] = [];
   parts.push(costStr ? `${costStr}/${balance}` : balance);
