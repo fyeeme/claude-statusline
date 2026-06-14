@@ -4,6 +4,7 @@ import { yellow, green, cyan, label } from './colors.js';
 export function renderToolsLine(ctx: RenderContext): string | null {
   const { tools } = ctx.transcript;
   const colors = ctx.config?.colors;
+  const separator = ctx.config?.display?.separator ?? '｜';
 
   if (tools.length === 0) {
     return null;
@@ -37,7 +38,7 @@ export function renderToolsLine(ctx: RenderContext): string | null {
     return null;
   }
 
-  return parts.join(' | ');
+  return parts.join(separator);
 }
 
 function truncatePath(path: string, maxLen: number = 20): string {

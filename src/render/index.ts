@@ -179,7 +179,7 @@ function truncateToWidth(str: string, maxWidth: number): string {
   return `${sliceVisible(str, keep)}${suffix}${RESET}`;
 }
 
-function splitLineBySeparators(line: string): { segments: string[]; separators: string[] } {
+function splitLineBySeparators(line: string, sep: string = ' | '): { segments: string[]; separators: string[] } {
   const segments: string[] = [];
   const separators: string[] = [];
   let currentStart = 0;
@@ -192,14 +192,12 @@ function splitLineBySeparators(line: string): { segments: string[]; separators: 
       continue;
     }
 
-    const separator = line.startsWith(' | ', i)
-      ? ' | '
-      : (line.startsWith(' | ', i) ? ' | ' : null);
+    const matched = line.startsWith(sep, i) ? sep : null;
 
-    if (separator) {
+    if (matched) {
       segments.push(line.slice(currentStart, i));
-      separators.push(separator);
-      i += separator.length;
+      separators.push(matched);
+      i += matched.length;
       currentStart = i;
       continue;
     }
@@ -211,8 +209,8 @@ function splitLineBySeparators(line: string): { segments: string[]; separators: 
   return { segments, separators };
 }
 
-function splitWrapParts(line: string): Array<{ separator: string; segment: string }> {
-  const { segments, separators } = splitLineBySeparators(line);
+function splitWrapParts(line: string, sep: string = ' | '): Array<{ separator: string; segment: string }> {
+  const { segments, separators } = splitLineBySeparators(line, sep);
   if (segments.length === 0) {
     return [];
   }
@@ -223,7 +221,7 @@ function splitWrapParts(line: string): Array<{ separator: string; segment: strin
   }];
   for (let segmentIndex = 1; segmentIndex < segments.length; segmentIndex += 1) {
     parts.push({
-      separator: separators[segmentIndex - 1] ?? ' | ',
+      separator: separators[segmentIndex - 1] ?? sep,
       segment: segments[segmentIndex],
     });
   }
@@ -254,12 +252,12 @@ function splitWrapParts(line: string): Array<{ separator: string; segment: strin
   return parts;
 }
 
-function wrapLineToWidth(line: string, maxWidth: number): string[] {
+function wrapLineToWidth(line: string, maxWidth: number, sep: string = ' | '): string[] {
   if (maxWidth <= 0 || visualLength(line) <= maxWidth) {
     return [line];
   }
 
-  const parts = splitWrapParts(line);
+  const parts = splitWrapParts(line, sep);
   if (parts.length <= 1) {
     return [truncateToWidth(line, maxWidth)];
   }
@@ -396,6 +394,7 @@ function renderCompact(ctx: RenderContext): string[] {
 
 function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null): Array<{ line: string; isActivity: boolean }> {
   const elementOrder = ctx.config?.elementOrder ?? DEFAULT_ELEMENT_ORDER;
+  const separator = ctx.config?.display?.separator ?? '｜';
   const mergeGroups = ctx.config?.display?.mergeGroups ?? DEFAULT_MERGE_GROUPS;
   const mergeGroupLookup = buildMergeGroupLookup(mergeGroups);
   const seen = new Set<HudElement>();
@@ -428,7 +427,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
           );
 
         if (renderedGroupLines.length > 1) {
-          const combinedLine = renderedGroupLines.map(({ line }) => line).join(' | ');
+          const combinedLine = renderedGroupLines.map(({ line }) => line).join(separator);
           const widthIsReal = terminalWidth && terminalWidth !== UNKNOWN_TERMINAL_WIDTH;
           const canCombine = !widthIsReal || visualLength(combinedLine) <= terminalWidth;
 
@@ -484,6 +483,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
 
 export function render(ctx: RenderContext): void {
   const lineLayout = ctx.config?.lineLayout ?? 'expanded';
+  const separator = ctx.config?.display?.separator ?? '｜';
   const showSeparators = ctx.config?.showSeparators ?? false;
   const detectedWidth =
     getTerminalWidth({ preferEnv: true, fallback: UNKNOWN_TERMINAL_WIDTH }) ??
@@ -541,7 +541,7 @@ export function render(ctx: RenderContext): void {
   // UNKNOWN_TERMINAL_WIDTH fallback, wrapping would use an arbitrary value
   // and produce incorrect line breaks.
   const wrapWidth = (terminalWidth && terminalWidth !== UNKNOWN_TERMINAL_WIDTH) ? terminalWidth : 0;
-  const visibleLines = physicalLines.flatMap(line => wrapLineToWidth(line, wrapWidth));
+  const visibleLines = physicalLines.flatMap(line => wrapLineToWidth(line, wrapWidth, separator));
 
   for (const line of visibleLines) {
     const outputLine = `${RESET}${line}`;

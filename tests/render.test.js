@@ -589,7 +589,7 @@ test('label color overrides apply across shared secondary text surfaces', () => 
   assert.ok(renderIdentityLine(ctx).includes(`${expected}Context\x1b[0m`));
   assert.ok(renderUsageLine(ctx)?.includes(`${expected}Usage\x1b[0m`));
   assert.ok(renderUsageLine(ctx, true)?.includes(`${expected}Usage  \x1b[0m`));
-  assert.ok(renderEnvironmentLine(ctx)?.includes(`${expected}2 CLAUDE.md | 1 rules\x1b[0m`));
+  assert.ok(renderEnvironmentLine(ctx)?.includes(`${expected}2 CLAUDE.md｜1 rules\x1b[0m`));
   assert.ok(renderMemoryLine({ ...ctx, config: { ...ctx.config, lineLayout: 'expanded', display: { ...ctx.config.display, showMemoryUsage: true } } })?.includes(`${expected}Approx RAM\x1b[0m`));
   assert.ok(renderToolsLine(ctx)?.includes(`${expected}: src/index.ts\x1b[0m`));
   assert.ok(renderAgentsLine(ctx)?.includes(`${expected}[haiku]\x1b[0m`));
@@ -787,7 +787,7 @@ test('renderSessionLine can give git its own segment for wrapping', () => {
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   ctx.config.gitStatus.branchOverflow = 'wrap';
   const line = stripAnsi(renderSessionLine(ctx));
-  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
+  assert.ok(line.includes('my-project｜git:(feature/add-auth)'), 'git should render as a separate segment');
 });
 
 test('renderProjectLine can give git its own segment for wrapping', () => {
@@ -796,7 +796,17 @@ test('renderProjectLine can give git its own segment for wrapping', () => {
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   ctx.config.gitStatus.branchOverflow = 'wrap';
   const line = stripAnsi(renderProjectLine(ctx) ?? '');
-  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
+  assert.ok(line.includes('my-project｜git:(feature/add-auth)'), 'git should render as a separate segment');
+});
+
+test('separator defaults to fullwidth ｜ and is configurable via display.separator', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  const defaultLine = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(defaultLine.includes('｜'), `default separator should be ｜: ${defaultLine}`);
+  ctx.config.display.separator = ' | ';
+  const halfLine = stripAnsi(renderProjectLine(ctx) ?? '');
+  assert.ok(halfLine.includes(' | '), `separator should fall back to halfwidth when configured: ${halfLine}`);
 });
 
 test('renderToolsLine renders running and completed tools', () => {
@@ -1385,7 +1395,7 @@ test('renderUsageLine shows 7d reset countdown in bar mode when above threshold'
   assert.ok(line.includes('45%'), `should include 5h percentage in bar mode: ${line}`);
   assert.ok(line.includes('85%'), `should include 7d percentage: ${line}`);
   assert.ok(line.includes('(resets in 1d 4h)'), `should include 7d reset countdown in bar mode: ${line}`);
-  assert.ok(line.includes('|'), `should render both usage windows above the threshold: ${line}`);
+  assert.ok(line.includes('｜'), `should render both usage windows above the threshold: ${line}`);
 });
 
 test('renderUsageLine can hide reset label in bar mode', () => {
@@ -1427,7 +1437,7 @@ test('renderUsageLine shows weekly-only usage without a ghost 5h section', () =>
   assert.ok(!line.includes('5h'), `should not render a ghost 5h section: ${line}`);
   assert.ok(line.includes('Weekly'), `should render the weekly window when it is the only usage value: ${line}`);
   assert.ok(line.includes('13%'), `should render the weekly percentage: ${line}`);
-  assert.ok(!line.includes('|'), `should not render a separator for a missing 5h window: ${line}`);
+  assert.ok(!line.includes('｜'), `should not render a separator for a missing 5h window: ${line}`);
 });
 
 test('renderSessionLine displays limit reached warning', () => {
@@ -1928,7 +1938,7 @@ test('render expanded layout combines default merge-group elements when adjacent
   assert.equal(lines.length, 1, 'adjacent usage and context should share one expanded line');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].includes(' | '), 'combined line should preserve the shared separator');
+  assert.ok(lines[0].includes('｜'), 'combined line should preserve the shared separator');
   const stripped = stripAnsi(lines[0]);
   assert.ok(stripped.includes('Usage 5h 30%'), `combined line should keep the default unpadded usage label: ${stripped}`);
   assert.ok(!stripped.includes('Usage  5h 30%'), `combined line should not pad the usage label: ${stripped}`);
@@ -2005,7 +2015,7 @@ test('render expanded layout combines custom merge groups in configured order', 
   assert.ok(lines[0].includes('my-project'), 'combined line should include project');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].split(' | ').length - 1 >= 2, 'combined line should keep the merge separators');
+  assert.ok(lines[0].split('｜').length - 1 >= 2, 'combined line should keep the merge separators');
 });
 
 test('render expanded layout aligns progress labels only after wrapping merged lines to separate lines', () => {

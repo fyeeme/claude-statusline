@@ -16,6 +16,7 @@ export function renderUsageLine(
 ): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
+  const separator = display?.separator ?? '｜';
 
   if (display?.showUsage === false) {
     return null;
@@ -71,7 +72,7 @@ export function renderUsageLine(
       : null;
 
     if (fiveHourPart && sevenDayPart) {
-      return `${fiveHourPart} | ${sevenDayPart}`;
+      return `${fiveHourPart}${separator}${sevenDayPart}`;
     }
     return fiveHourPart ?? sevenDayPart ?? null;
   }
@@ -126,7 +127,7 @@ export function renderUsageLine(
       windowType: ctx.usageData.sevenDayWindowType,
       tokenCount: ctx.usageData.sevenDayTokens,
     });
-    return `${usageLabel} ${fiveHourPart} | ${sevenDayPart}`;
+    return `${usageLabel} ${fiveHourPart}${separator}${sevenDayPart}`;
   }
 
   return `${usageLabel} ${fiveHourPart}`;

@@ -117,6 +117,7 @@ export interface HudConfig {
     modelOverride: string;
     customLine: string;
     timeFormat: TimeFormatMode;
+    separator: string;
   };
   usage: {
     /** Cache TTL for 5h usage data in seconds (default: 30) */
@@ -146,15 +147,15 @@ export const DEFAULT_CONFIG: HudConfig = {
   display: {
     showModel: true,
     showProject: true,
-    showContextBar: true,
-    contextValue: 'percent',
+    showContextBar: false,
+    contextValue: 'both',
     showConfigCounts: false,
     showCost: false,
     showDuration: false,
     showSpeed: false,
     showTokenBreakdown: true,
     showUsage: true,
-    usageBarEnabled: true,
+    usageBarEnabled: false,
     showResetLabel: true,
     usageCompact: false,
     showTools: false,
@@ -179,6 +180,7 @@ export const DEFAULT_CONFIG: HudConfig = {
     modelOverride: '',
     customLine: '',
     timeFormat: 'relative',
+    separator: '｜',
   },
   usage: {
     fiveHourRefreshSec: 30,
@@ -530,6 +532,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     timeFormat: validateTimeFormat(migrated.display?.timeFormat)
       ? migrated.display.timeFormat
       : DEFAULT_CONFIG.display.timeFormat,
+    separator: typeof migrated.display?.separator === 'string'
+      ? migrated.display.separator
+      : DEFAULT_CONFIG.display.separator,
   };
 
   const usage = {

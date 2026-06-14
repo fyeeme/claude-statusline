@@ -16,6 +16,7 @@ function hyperlink(uri: string, text: string): string {
 export function renderProjectLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
+  const separator = display?.separator ?? '｜';
   const parts: string[] = [];
 
   if (display?.showModel !== false) {
@@ -121,7 +122,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     return null;
   }
 
-  return parts.join(' | ');
+  return parts.join(separator);
 }
 
 function formatAheadCount(

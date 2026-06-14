@@ -29,6 +29,7 @@ export function renderSessionLine(ctx: RenderContext): string {
   }
 
   const colors = ctx.config?.colors;
+  const separator = ctx.config?.display?.separator ?? '｜';
   const barWidth = getAdaptiveBarWidth();
   const bar = coloredBar(percent, barWidth, colors);
 
@@ -300,7 +301,7 @@ export function renderSessionLine(ctx: RenderContext): string {
     parts.push(customColor(customLine, colors));
   }
 
-  let line = parts.join(' | ');
+  let line = parts.join(separator);
 
   // Token breakdown at high context
   if (display?.showTokenBreakdown !== false && percent >= 85) {
