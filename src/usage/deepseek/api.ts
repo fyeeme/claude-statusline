@@ -100,9 +100,9 @@ export function scanWeeklyTokens(projectDir: string, nowMs: number = Date.now())
   return total;
 }
 
-/** Read DeepSeek API key from env (Claude Code sets ANTHROPIC_API_KEY). */
+/** Read DeepSeek API key from env (Claude Code uses ANTHROPIC_AUTH_TOKEN). */
 export function getDeepSeekApiKey(): string | null {
-  const key = process.env.ANTHROPIC_API_KEY;
+  const key = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
   return key || null;
 }
 
