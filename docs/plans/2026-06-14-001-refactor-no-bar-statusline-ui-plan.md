@@ -1,7 +1,7 @@
 ---
 title: 去 bar 化 statusline UI 重写
 type: refactor
-status: active
+status: completed
 date: 2026-06-14
 origin: docs/ideation/ui-rewrite-no-bar.md
 ---
