@@ -56,24 +56,25 @@ export async function getDeepSeekUsage(
     return toUsageData(cached);
   }
 
-  const apiKey = deps.getApiKey();
-  const origin = deps.getOrigin();
-  if (!apiKey || !origin) {
-    return cached ? toUsageData(cached) : null;
-  }
-
-  const balance = await deps.fetchBalance(origin, apiKey);
-  if (!balance) {
-    return cached ? toUsageData(cached) : null;
-  }
-
+  // Always scan weekly tokens (fast local file scan, independent of API)
   const projectDir = getProjectSessionsDir(stdin?.cwd);
   const weeklyTokens = projectDir ? deps.scanWeeklyTokens(projectDir, nowMs) : 0;
 
+  // Try balance API
+  const apiKey = deps.getApiKey();
+  const origin = deps.getOrigin();
+  let balance: DeepSeekBalance | null = null;
+  if (apiKey && origin) {
+    balance = await deps.fetchBalance(origin, apiKey);
+  }
+
+  // Return partial data when balance fails but weekly tokens or cache exist
+  if (!balance && !cached && weeklyTokens === 0) return null;
+
   const entry: DeepSeekCacheEntry = {
-    balance: balance.totalBalance,
-    currency: balance.currency,
-    weeklyTokens,
+    balance: balance?.totalBalance ?? cached?.balance ?? '?',
+    currency: balance?.currency ?? cached?.currency ?? 'CNY',
+    weeklyTokens: weeklyTokens || cached?.weeklyTokens || 0,
     fetchedAt: nowMs,
     ttlMs: deps.cacheTtlMs,
   };

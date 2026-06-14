@@ -36,19 +36,24 @@ test('getDeepSeekUsage returns cached entry within TTL without fetching', async 
   assert.equal(result.balance, '40.00');
 });
 
-test('getDeepSeekUsage returns null when no API key and no cache', async () => {
+test('getDeepSeekUsage returns partial data (weeklyTokens only) when no API key', async () => {
   const result = await getDeepSeekUsage({ cwd: '/tmp/proj' }, baseDeps({
     getApiKey: () => null,
     fetchBalance: async () => null,
   }));
-  assert.equal(result, null);
+  assert.notEqual(result, null, 'should return weekly tokens even without key');
+  assert.equal(result.balance, '?');
+  assert.equal(result.weeklyTokens, 1200000);
 });
 
-test('getDeepSeekUsage returns null on balance API failure without cache', async () => {
+test('getDeepSeekUsage returns partial data on balance API failure without cache', async () => {
   const result = await getDeepSeekUsage({ cwd: '/tmp/proj' }, baseDeps({
     fetchBalance: async () => null,
+    scanWeeklyTokens: () => 800000,
   }));
-  assert.equal(result, null);
+  assert.notEqual(result, null, 'should return weekly tokens on balance failure');
+  assert.equal(result.balance, '?');
+  assert.equal(result.weeklyTokens, 800000);
 });
 
 test('getDeepSeekUsage returns balance with weeklyTokens=0 when scan yields nothing', async () => {

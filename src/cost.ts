@@ -33,9 +33,9 @@ const ANTHROPIC_MODEL_PRICING: Array<{ pattern: RegExp; pricing: ModelPricing }>
   { pattern: /\bopusplan\b/i, pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 } },
   { pattern: /\bsonnetplan\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
   { pattern: /\bhaikuplan\b/i, pricing: { inputUsdPerMillion: 0.8, outputUsdPerMillion: 4 } },
-  // DeepSeek pricing (approximate USD per million tokens; refine from official rates)
-  { pattern: /\bdeepseek (?:chat|v3)\b/i, pricing: { inputUsdPerMillion: 0.27, outputUsdPerMillion: 1.10 } },
-  { pattern: /\bdeepseek (?:reasoner|r1)\b/i, pricing: { inputUsdPerMillion: 0.55, outputUsdPerMillion: 2.19 } },
+  // DeepSeek 官方定价（CNY / 百万 tokens）
+  { pattern: /\bdeepseek (?:chat|v3)\b/i, pricing: { inputUsdPerMillion: 1.00, outputUsdPerMillion: 4.00 } },
+  { pattern: /\bdeepseek (?:reasoner|r1)\b/i, pricing: { inputUsdPerMillion: 2.00, outputUsdPerMillion: 6.00 } },
 ];
 
 function normalizeModelName(modelName: string): string {
