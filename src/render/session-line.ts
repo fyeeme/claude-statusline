@@ -6,6 +6,7 @@ import { critical, git as gitColor, gitBranch as gitBranchColor, label, model as
 import { getAdaptiveBarWidth } from '../utils/terminal.js';
 import { renderCostEstimate } from './lines/cost.js';
 import { renderPromptCacheLine } from './lines/prompt-cache.js';
+import { renderDeepSeekUsage } from './lines/usage.js';
 import { t } from '../i18n/index.js';
 import type { TimeFormatMode } from '../config.js';
 import { formatResetTime } from './format-reset-time.js';
@@ -132,7 +133,10 @@ export function renderSessionLine(ctx: RenderContext): string {
     const usageCompact = display?.usageCompact ?? false;
     const showResetLabel = display?.showResetLabel ?? true;
 
-    if (isLimitReached(ctx.usageData)) {
+    if (ctx.usageData.platform === 'deepseek') {
+      const dsLine = renderDeepSeekUsage(ctx);
+      if (dsLine) metricsParts.push(dsLine);
+    } else if (isLimitReached(ctx.usageData)) {
       const resetTime = ctx.usageData.fiveHour === 100
         ? formatResetTime(ctx.usageData.fiveHourResetAt, timeFormat)
         : formatResetTime(ctx.usageData.sevenDayResetAt, timeFormat);

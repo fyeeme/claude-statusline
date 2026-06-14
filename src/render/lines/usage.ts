@@ -9,6 +9,7 @@ import { progressLabel } from "./label-align.js";
 import type { TimeFormatMode } from "../../config.js";
 import { formatResetTime } from "../format-reset-time.js";
 import { formatTokenCount } from "../../usage/glm/api.js";
+import { resolveSessionCost, formatUsd } from "../../cost.js";
 
 export function renderUsageLine(
   ctx: RenderContext,
@@ -28,6 +29,10 @@ export function renderUsageLine(
 
   if (isBedrockModelId(ctx.stdin.model?.id)) {
     return null;
+  }
+
+  if (ctx.usageData.platform === 'deepseek') {
+    return renderDeepSeekUsage(ctx);
   }
 
   const usageLabel = progressLabel("label.usage", colors, alignLabels);
@@ -131,6 +136,24 @@ export function renderUsageLine(
   }
 
   return `${usageLabel} ${fiveHourPart}`;
+}
+
+/** DeepSeek usage display: $sessionCost/balance · 7d:weeklyTokens */
+export function renderDeepSeekUsage(ctx: RenderContext): string {
+  const usageData = ctx.usageData!;
+  const colors = ctx.config?.colors;
+  const balanceSymbol = usageData.currency === 'CNY' ? '¥' : '$';
+  const balance = `${balanceSymbol}${usageData.balance ?? '?'}`;
+  const weekly = usageData.weeklyTokens && usageData.weeklyTokens > 0
+    ? `7d:${formatTokenCount(usageData.weeklyTokens)}`
+    : '';
+  const cost = resolveSessionCost(ctx.stdin, ctx.transcript?.sessionTokens);
+  const costStr = cost && cost.totalUsd > 0 ? formatUsd(cost.totalUsd) : '';
+
+  const parts: string[] = [];
+  parts.push(costStr ? `${costStr}/${balance}` : balance);
+  if (weekly) parts.push(weekly);
+  return label(parts.join(' · '), colors);
 }
 
 function formatCompactWindowPart(

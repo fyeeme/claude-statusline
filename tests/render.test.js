@@ -1401,6 +1401,25 @@ test('renderUsageLine translates weekly label when Chinese is enabled', () => {
   }
 });
 
+test('renderUsageLine shows deepseek balance + weekly tokens', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    fiveHour: null,
+    sevenDay: null,
+    fiveHourStartAt: null,
+    fiveHourResetAt: null,
+    sevenDayStartAt: null,
+    sevenDayResetAt: null,
+    platform: 'deepseek',
+    balance: '50.00',
+    currency: 'CNY',
+    weeklyTokens: 50000,
+  };
+  const line = stripAnsi(renderUsageLine(ctx));
+  assert.ok(line.includes('¥50.00'), `should show balance: ${line}`);
+  assert.ok(line.includes('7d:50K'), `should show weekly tokens: ${line}`);
+});
+
 test('renderUsageLine shows 7d reset countdown in bar mode when above threshold', () => {
   const ctx = baseContext();
   const resetTime = new Date(Date.now() + (28 * 60 * 60 * 1000)); // 1d 4h from now
