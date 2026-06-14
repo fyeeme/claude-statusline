@@ -79,6 +79,10 @@ export function renderUsageLine(
     if (fiveHourPart && sevenDayPart) {
       return `${fiveHourPart}${separator}${sevenDayPart}`;
     }
+    // 无 unit:6 周限额但有自然周 token
+    if (fiveHourPart && sevenDay === null && ctx.usageData.sevenDayTokens && ctx.usageData.sevenDayTokens > 0) {
+      return `${fiveHourPart}${separator}${label(`7d:${formatTokenCount(ctx.usageData.sevenDayTokens)}`, colors)}`;
+    }
     return fiveHourPart ?? sevenDayPart ?? null;
   }
 
@@ -133,6 +137,11 @@ export function renderUsageLine(
       tokenCount: ctx.usageData.sevenDayTokens,
     });
     return `${usageLabel} ${fiveHourPart}${separator}${sevenDayPart}`;
+  }
+
+  // 无 unit:6 周限额但有自然周 token → 显示 7d:<tokens>
+  if (sevenDay === null && ctx.usageData.sevenDayTokens && ctx.usageData.sevenDayTokens > 0) {
+    return `${usageLabel} ${fiveHourPart}${separator}${label(`7d:${formatTokenCount(ctx.usageData.sevenDayTokens)}`, colors)}`;
   }
 
   return `${usageLabel} ${fiveHourPart}`;
