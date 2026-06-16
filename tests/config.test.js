@@ -57,6 +57,7 @@ test('loadConfig returns valid config structure', async () => {
   assert.equal(typeof config.display.showSpeed, 'boolean');
   assert.equal(typeof config.display.showTokenBreakdown, 'boolean');
   assert.equal(typeof config.display.showUsage, 'boolean');
+  assert.ok(['percent', 'remaining'].includes(config.display.usageValue), 'usageValue should be valid');
   assert.equal(typeof config.display.showTools, 'boolean');
   assert.equal(typeof config.display.showAgents, 'boolean');
   assert.equal(typeof config.display.showTodos, 'boolean');
@@ -85,7 +86,7 @@ test('getConfigPath returns correct path', () => {
   try {
     const configPath = getConfigPath();
     const homeDir = os.homedir();
-    assert.equal(configPath, path.join(homeDir, '.claude', 'plugins', 'claude-hud', 'config.json'));
+    assert.equal(configPath, path.join(homeDir, '.claude', 'plugins', 'claude-statusline', 'config.json'));
   } finally {
     restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
   }
@@ -96,6 +97,23 @@ test('mergeConfig defaults showSessionName to false', () => {
   assert.equal(config.display.showSessionName, false);
   assert.equal(DEFAULT_CONFIG.display.showSessionName, false);
 });
+
+test('mergeConfig defaults forceMaxWidth to false', () => {
+  const config = mergeConfig({});
+  assert.equal(config.forceMaxWidth, false);
+  assert.equal(DEFAULT_CONFIG.forceMaxWidth, false);
+});
+
+test('mergeConfig preserves explicit forceMaxWidth=true', () => {
+  const config = mergeConfig({ forceMaxWidth: true });
+  assert.equal(config.forceMaxWidth, true);
+});
+
+test('mergeConfig falls back to false for invalid forceMaxWidth values', () => {
+  assert.equal(mergeConfig({ forceMaxWidth: 'yes' }).forceMaxWidth, false);
+  assert.equal(mergeConfig({ forceMaxWidth: 1 }).forceMaxWidth, false);
+});
+
 
 test('mergeConfig preserves explicit showSessionName=true', () => {
   const config = mergeConfig({ display: { showSessionName: true } });
@@ -178,6 +196,36 @@ test('mergeConfig preserves explicit git push thresholds', () => {
   assert.equal(config.gitStatus.pushCriticalThreshold, 30);
 });
 
+test('mergeConfig defaults context thresholds to 65/85', () => {
+  const config = mergeConfig({});
+  assert.equal(config.display.contextWarningThreshold, 65);
+  assert.equal(config.display.contextCriticalThreshold, 85);
+});
+
+test('mergeConfig preserves explicit context thresholds', () => {
+  const config = mergeConfig({
+    display: { contextWarningThreshold: 30, contextCriticalThreshold: 50 },
+  });
+  assert.equal(config.display.contextWarningThreshold, 30);
+  assert.equal(config.display.contextCriticalThreshold, 50);
+});
+
+test('mergeConfig clamps context thresholds to 0-100', () => {
+  const config = mergeConfig({
+    display: { contextWarningThreshold: -10, contextCriticalThreshold: 150 },
+  });
+  assert.equal(config.display.contextWarningThreshold, 0);
+  assert.equal(config.display.contextCriticalThreshold, 100);
+});
+
+test('mergeConfig falls back to defaults for invalid context thresholds', () => {
+  const config = mergeConfig({
+    display: { contextWarningThreshold: 'high', contextCriticalThreshold: null },
+  });
+  assert.equal(config.display.contextWarningThreshold, 65);
+  assert.equal(config.display.contextCriticalThreshold, 85);
+});
+
 test('mergeConfig preserves valid git branch overflow modes', () => {
   assert.equal(mergeConfig({ gitStatus: { branchOverflow: 'wrap' } }).gitStatus.branchOverflow, 'wrap');
   assert.equal(mergeConfig({ gitStatus: { branchOverflow: 'truncate' } }).gitStatus.branchOverflow, 'truncate');
@@ -204,6 +252,21 @@ test('mergeConfig preserves customLine and truncates long values', () => {
   const config = mergeConfig({ display: { customLine } });
   assert.equal(config.display.customLine.length, 80);
   assert.equal(config.display.customLine, customLine.slice(0, 80));
+});
+
+test('mergeConfig defaults customLinePosition to last', () => {
+  const config = mergeConfig({});
+  assert.equal(config.display.customLinePosition, 'last');
+});
+
+test('mergeConfig preserves explicit customLinePosition', () => {
+  const config = mergeConfig({ display: { customLinePosition: 'first' } });
+  assert.equal(config.display.customLinePosition, 'first');
+});
+
+test('mergeConfig falls back to last for invalid customLinePosition', () => {
+  const config = mergeConfig({ display: { customLinePosition: 'middle' } });
+  assert.equal(config.display.customLinePosition, 'last');
 });
 
 test('mergeConfig defaults modelFormat to full', () => {
@@ -291,12 +354,12 @@ test('mergeConfig rejects invalid maxWidth', () => {
 
 test('getConfigPath respects CLAUDE_CONFIG_DIR', async () => {
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const customConfigDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-config-dir-'));
+  const customConfigDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-config-dir-'));
 
   try {
     process.env.CLAUDE_CONFIG_DIR = customConfigDir;
     const configPath = getConfigPath();
-    assert.equal(configPath, path.join(customConfigDir, 'plugins', 'claude-hud', 'config.json'));
+    assert.equal(configPath, path.join(customConfigDir, 'plugins', 'claude-statusline', 'config.json'));
   } finally {
     restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
     await rm(customConfigDir, { recursive: true, force: true });
@@ -305,11 +368,11 @@ test('getConfigPath respects CLAUDE_CONFIG_DIR', async () => {
 
 test('loadConfig reads user config from CLAUDE_CONFIG_DIR', async () => {
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const customConfigDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-config-load-'));
+  const customConfigDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-config-load-'));
 
   try {
     process.env.CLAUDE_CONFIG_DIR = customConfigDir;
-    const pluginDir = path.join(customConfigDir, 'plugins', 'claude-hud');
+    const pluginDir = path.join(customConfigDir, 'plugins', 'claude-statusline');
     await mkdir(pluginDir, { recursive: true });
     await writeFile(
       path.join(pluginDir, 'config.json'),
@@ -402,6 +465,24 @@ test('mergeConfig falls back to default for invalid contextValue', () => {
   assert.equal(config.display.contextValue, DEFAULT_CONFIG.display.contextValue);
 });
 
+test('mergeConfig accepts usageValue=remaining', () => {
+  const config = mergeConfig({
+    display: {
+      usageValue: 'remaining',
+    },
+  });
+  assert.equal(config.display.usageValue, 'remaining');
+});
+
+test('mergeConfig falls back to default for invalid usageValue', () => {
+  const config = mergeConfig({
+    display: {
+      usageValue: 'tokens',
+    },
+  });
+  assert.equal(config.display.usageValue, DEFAULT_CONFIG.display.usageValue);
+});
+
 test('mergeConfig defaults elementOrder to the full expanded layout', () => {
   const config = mergeConfig({});
   assert.deepEqual(config.elementOrder, DEFAULT_ELEMENT_ORDER);
@@ -479,16 +560,16 @@ test('mergeConfig falls back to default when elementOrder is empty or invalid', 
 
 test('mergeConfig defaults colors to expected semantic palette', () => {
   const config = mergeConfig({});
-  assert.equal(config.colors.context, 'green');
-  assert.equal(config.colors.usage, 'brightBlue');
+  assert.equal(config.colors.context, 'none');
+  assert.equal(config.colors.usage, 'none');
   assert.equal(config.colors.warning, 'yellow');
-  assert.equal(config.colors.usageWarning, 'brightMagenta');
+  assert.equal(config.colors.usageWarning, 'yellow');
   assert.equal(config.colors.critical, 'red');
   assert.equal(config.colors.model, 'cyan');
   assert.equal(config.colors.project, 'yellow');
   assert.equal(config.colors.git, 'magenta');
   assert.equal(config.colors.gitBranch, 'cyan');
-  assert.equal(config.colors.label, 'dim');
+  assert.equal(config.colors.label, 'none');
   assert.equal(config.colors.custom, 208);
 });
 
@@ -522,7 +603,7 @@ test('mergeConfig accepts valid color overrides and filters invalid values', () 
   assert.equal(config.colors.custom, '#ff6600');
 });
 
-// --- Custom color value tests (256-color and hex) ---
+// --- Custom colour value tests (256-colour and hex) ---
 
 test('mergeConfig accepts 256-color index values', () => {
   const config = mergeConfig({
@@ -623,4 +704,173 @@ test('mergeConfig rejects invalid hex strings', () => {
   assert.equal(config.colors.context, DEFAULT_CONFIG.colors.context);
   assert.equal(config.colors.usage, DEFAULT_CONFIG.colors.usage);
   assert.equal(config.colors.warning, DEFAULT_CONFIG.colors.warning);
+});
+
+test('mergeConfig accepts valid single-character barFilled and barEmpty', () => {
+  const config = mergeConfig({
+    colors: { barFilled: '●', barEmpty: '○' },
+  });
+  assert.equal(config.colors.barFilled, '●');
+  assert.equal(config.colors.barEmpty, '○');
+});
+
+test('mergeConfig accepts surrogate-pair emoji for bar chars', () => {
+  const config = mergeConfig({
+    colors: { barFilled: '🟢', barEmpty: '🔴' },
+  });
+  assert.equal(config.colors.barFilled, '🟢');
+  assert.equal(config.colors.barEmpty, '🔴');
+});
+
+test('mergeConfig accepts CJK and Unicode symbols for bar chars', () => {
+  const config = mergeConfig({
+    colors: { barFilled: '中', barEmpty: '★' },
+  });
+  assert.equal(config.colors.barFilled, '中');
+  assert.equal(config.colors.barEmpty, '★');
+});
+
+test('mergeConfig rejects control characters for bar chars', () => {
+  const config = mergeConfig({
+    colors: { barFilled: '\n', barEmpty: '\x1b' },
+  });
+  assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(config.colors.barEmpty, DEFAULT_CONFIG.colors.barEmpty);
+});
+
+test('mergeConfig rejects C1 control characters for bar chars', () => {
+  const config = mergeConfig({
+    colors: { barFilled: '\x80', barEmpty: '\x9f' },
+  });
+  assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(config.colors.barEmpty, DEFAULT_CONFIG.colors.barEmpty);
+});
+
+test('mergeConfig rejects multi-character strings for bar chars', () => {
+  const config = mergeConfig({
+    colors: { barFilled: 'ab', barEmpty: '##' },
+  });
+  assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(config.colors.barEmpty, DEFAULT_CONFIG.colors.barEmpty);
+});
+
+test('mergeConfig rejects non-string types for bar chars', () => {
+  const config = mergeConfig({
+    colors: { barFilled: 123, barEmpty: true },
+  });
+  assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(config.colors.barEmpty, DEFAULT_CONFIG.colors.barEmpty);
+});
+
+test('mergeConfig rejects bidirectional control characters for bar chars', () => {
+  const bidiChars = ['‮', '‎', '‏', '‪', '‫', '‬', '‭', '⁦', '⁩'];
+  for (const ch of bidiChars) {
+    const config = mergeConfig({ colors: { barFilled: ch } });
+    assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled,
+      `should reject U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+  }
+});
+
+test('mergeConfig rejects zero-width characters for bar chars', () => {
+  const zwChars = ['​', '‌', '‍', '﻿'];
+  for (const ch of zwChars) {
+    const config = mergeConfig({ colors: { barFilled: ch } });
+    assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled,
+      `should reject U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+  }
+});
+
+test('mergeConfig rejects variation selectors for bar chars', () => {
+  assert.equal(mergeConfig({ colors: { barFilled: '︀' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(mergeConfig({ colors: { barFilled: '️' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(mergeConfig({ colors: { barFilled: String.fromCodePoint(0xE0100) } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+});
+
+test('mergeConfig rejects other invisible format characters for bar chars', () => {
+  const formatChars = ['­', '؜', '⁠'];
+  for (const ch of formatChars) {
+    const config = mergeConfig({ colors: { barFilled: ch } });
+    assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled,
+      `should reject U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+  }
+});
+
+test('mergeConfig rejects compound emoji with zero-width joiners for bar chars', () => {
+  const config = mergeConfig({ colors: { barFilled: '\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}' } });
+  assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+});
+
+test('mergeConfig rejects invisible code points attached to visible bar chars', () => {
+  assert.equal(mergeConfig({ colors: { barFilled: 'a\u202e' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(mergeConfig({ colors: { barFilled: '⭐\ufe0f' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+});
+
+test('mergeConfig rejects empty string for bar chars', () => {
+  const config = mergeConfig({ colors: { barFilled: '', barEmpty: '' } });
+  assert.equal(config.colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(config.colors.barEmpty, DEFAULT_CONFIG.colors.barEmpty);
+});
+
+test('mergeConfig rejects line and paragraph separators for bar chars', () => {
+  assert.equal(mergeConfig({ colors: { barFilled: ' ' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(mergeConfig({ colors: { barFilled: ' ' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+});
+
+test('mergeConfig rejects Unicode noncharacters for bar chars', () => {
+  assert.equal(mergeConfig({ colors: { barFilled: '﷐' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(mergeConfig({ colors: { barFilled: '￾' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+  assert.equal(mergeConfig({ colors: { barFilled: '￿' } }).colors.barFilled, DEFAULT_CONFIG.colors.barFilled);
+});
+
+test('mergeConfig independently validates barFilled and barEmpty', () => {
+  const config = mergeConfig({ colors: { barFilled: '█', barEmpty: '‮' } });
+  assert.equal(config.colors.barFilled, '█');
+  assert.equal(config.colors.barEmpty, DEFAULT_CONFIG.colors.barEmpty);
+});
+
+test('mergeConfig defaults showAdvisor to false', () => {
+  const config = mergeConfig({});
+  assert.equal(config.display.showAdvisor, false);
+  assert.equal(DEFAULT_CONFIG.display.showAdvisor, false);
+});
+
+test('mergeConfig defaults showCompactions to false', () => {
+  const config = mergeConfig({});
+  assert.equal(config.display.showCompactions, false);
+  assert.equal(DEFAULT_CONFIG.display.showCompactions, false);
+});
+
+test('mergeConfig preserves explicit showCompactions=true', () => {
+  const config = mergeConfig({ display: { showCompactions: true } });
+  assert.equal(config.display.showCompactions, true);
+});
+
+test('mergeConfig rejects non-boolean showCompactions', () => {
+  const config = mergeConfig({ display: { showCompactions: 'yes' } });
+  assert.equal(config.display.showCompactions, false);
+});
+
+test('mergeConfig preserves explicit showAdvisor=true', () => {
+  const config = mergeConfig({ display: { showAdvisor: true } });
+  assert.equal(config.display.showAdvisor, true);
+});
+
+test('mergeConfig defaults advisorOverride to empty string', () => {
+  const config = mergeConfig({});
+  assert.equal(config.display.advisorOverride, '');
+});
+
+test('mergeConfig preserves explicit advisorOverride and caps at 80 chars', () => {
+  const config = mergeConfig({ display: { advisorOverride: 'Opus 4.7 (custom)' } });
+  assert.equal(config.display.advisorOverride, 'Opus 4.7 (custom)');
+
+  const longValue = 'x'.repeat(120);
+  const capped = mergeConfig({ display: { advisorOverride: longValue } });
+  assert.equal(capped.display.advisorOverride.length, 80);
+});
+
+test('mergeConfig rejects non-string advisorOverride and non-boolean showAdvisor', () => {
+  const config = mergeConfig({ display: { showAdvisor: 'yes', advisorOverride: 42 } });
+  assert.equal(config.display.showAdvisor, false);
+  assert.equal(config.display.advisorOverride, '');
 });

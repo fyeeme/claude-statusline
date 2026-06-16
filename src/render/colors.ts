@@ -12,7 +12,7 @@ const BRIGHT_BLUE = '\x1b[94m';
 const BRIGHT_MAGENTA = '\x1b[95m';
 const CLAUDE_ORANGE = '\x1b[38;5;208m';
 
-const ANSI_BY_NAME: Record<HudColorName, string> = {
+const ANSI_BY_NAME: Record<Exclude<HudColorName, 'none'>, string> = {
   dim: DIM,
   red: RED,
   green: GREEN,
@@ -39,13 +39,16 @@ function resolveAnsi(value: HudColorValue | undefined, fallback: string): string
   if (value === undefined || value === null) {
     return fallback;
   }
+  if (value === 'none') {
+    return '';
+  }
   if (typeof value === 'number') {
     return `\x1b[38;5;${value}m`;
   }
   if (typeof value === 'string' && value.startsWith('#') && value.length === 7) {
     return hexToAnsi(value);
   }
-  return ANSI_BY_NAME[value as HudColorName] ?? fallback;
+  return ANSI_BY_NAME[value as Exclude<HudColorName, 'none'>] ?? fallback;
 }
 
 function colorize(text: string, color: string): string {
@@ -127,16 +130,16 @@ export function getContextColor(
   thresholds?: ContextThresholds,
 ): string {
   const critical = thresholds?.critical ?? 85;
-  const warning = thresholds?.warning ?? 70;
+  const warning = thresholds?.warning ?? 65;
   if (percent >= critical) return resolveAnsi(colors?.critical, RED);
   if (percent >= warning) return resolveAnsi(colors?.warning, YELLOW);
-  return resolveAnsi(colors?.context, GREEN);
+  return resolveAnsi(colors?.context, DIM);
 }
 
 export function getQuotaColor(percent: number, colors?: Partial<HudColorOverrides>): string {
-  if (percent >= 90) return resolveAnsi(colors?.critical, RED);
-  if (percent >= 75) return resolveAnsi(colors?.usageWarning, BRIGHT_MAGENTA);
-  return resolveAnsi(colors?.usage, BRIGHT_BLUE);
+  if (percent >= 85) return resolveAnsi(colors?.critical, RED);
+  if (percent >= 65) return resolveAnsi(colors?.usageWarning, YELLOW);
+  return resolveAnsi(colors?.usage, DIM);
 }
 
 export function quotaBar(percent: number, width: number = 10, colors?: Partial<HudColorOverrides>): string {

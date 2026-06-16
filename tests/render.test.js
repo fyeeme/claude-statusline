@@ -110,13 +110,13 @@ function withTerminal(columns, fn) {
 }
 
 async function withDeterministicSpeedCache(fn) {
-  const tempConfigDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-render-'));
+  const tempConfigDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-render-'));
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
   const originalNow = Date.now;
   const transcriptPath = path.join(tempConfigDir, 'session.jsonl');
   await writeFile(transcriptPath, '', 'utf8');
   const transcriptHash = createHash('sha256').update(path.resolve(transcriptPath)).digest('hex');
-  const cachePath = path.join(tempConfigDir, 'plugins', 'claude-hud', 'speed-cache', `${transcriptHash}.json`);
+  const cachePath = path.join(tempConfigDir, 'plugins', 'claude-statusline', 'speed-cache', `${transcriptHash}.json`);
 
   process.env.CLAUDE_CONFIG_DIR = tempConfigDir;
   await mkdir(path.dirname(cachePath), { recursive: true });
@@ -248,12 +248,12 @@ test('renderSessionLine handles missing cache token fields', () => {
 });
 
 test('getContextColor returns yellow for warning threshold', () => {
-  assert.equal(getContextColor(70), '\x1b[33m');
+  assert.equal(getContextColor(65), '\x1b[33m');
 });
 
 test('getContextColor respects custom thresholds', () => {
   const thresholds = { warning: 30, critical: 50 };
-  assert.equal(getContextColor(10, undefined, thresholds), '\x1b[32m'); // green
+  assert.equal(getContextColor(10, undefined, thresholds), '\x1b[2m'); // dim
   assert.equal(getContextColor(30, undefined, thresholds), '\x1b[33m'); // yellow
   assert.equal(getContextColor(49, undefined, thresholds), '\x1b[33m'); // still yellow
   assert.equal(getContextColor(50, undefined, thresholds), '\x1b[31m'); // red
@@ -261,8 +261,8 @@ test('getContextColor respects custom thresholds', () => {
 });
 
 test('getContextColor falls back to defaults when thresholds undefined', () => {
-  assert.equal(getContextColor(69, undefined, {}), '\x1b[32m');
-  assert.equal(getContextColor(70, undefined, {}), '\x1b[33m');
+  assert.equal(getContextColor(64, undefined, {}), '\x1b[2m');
+  assert.equal(getContextColor(65, undefined, {}), '\x1b[33m');
   assert.equal(getContextColor(85, undefined, {}), '\x1b[31m');
 });
 
@@ -286,6 +286,13 @@ test('getContextColor and getQuotaColor respect custom semantic overrides', () =
   assert.equal(getContextColor(70, colors), '\x1b[94m');
   assert.equal(getQuotaColor(25, colors), '\x1b[35m');
   assert.equal(getQuotaColor(80, colors), '\x1b[33m');
+});
+
+test('getContextColor and getQuotaColor render bare text when color is "none"', () => {
+  assert.equal(getContextColor(10, { context: 'none' }), '');
+  assert.equal(getContextColor(64, { context: 'none' }), '');
+  assert.equal(getQuotaColor(10, { usage: 'none' }), '');
+  assert.equal(getQuotaColor(64, { usage: 'none' }), '');
 });
 
 test('getContextColor and getQuotaColor resolve 256-color indices', () => {
@@ -734,7 +741,7 @@ test('label color overrides apply across shared secondary text surfaces', () => 
   assert.ok(renderIdentityLine(ctx).includes(`${expected}Context\x1b[0m`));
   assert.ok(renderUsageLine(ctx)?.includes(`${expected}Usage\x1b[0m`));
   assert.ok(renderUsageLine(ctx, true)?.includes(`${expected}Usage  \x1b[0m`));
-  assert.ok(renderEnvironmentLine(ctx)?.includes(`${expected}2 CLAUDE.md｜1 rules\x1b[0m`));
+  assert.ok(renderEnvironmentLine(ctx)?.includes(`${expected}2 CLAUDE.md | 1 rules\x1b[0m`));
   assert.ok(renderMemoryLine({ ...ctx, config: { ...ctx.config, lineLayout: 'expanded', display: { ...ctx.config.display, showMemoryUsage: true } } })?.includes(`${expected}Approx RAM\x1b[0m`));
   assert.ok(renderToolsLine(ctx)?.includes(`${expected}: src/index.ts\x1b[0m`));
   assert.ok(renderSkillsLine(ctx)?.includes(`${expected}(1)\x1b[0m`));
@@ -880,7 +887,7 @@ test('render expanded layout includes speed and duration on the project line', a
 
     assert.ok(projectLine, 'expected an expanded project line');
     assert.ok(projectLine.includes('out: 1000.0 tok/s'), 'should include deterministic speed');
-    assert.ok(projectLine.includes('⏱️  12m 34s'), 'should include session duration');
+    assert.ok(projectLine.includes('⏱️ 12m 34s'), 'should include session duration');
   });
 });
 
@@ -945,7 +952,7 @@ test('renderProjectLine can give git its own segment for wrapping', () => {
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   ctx.config.gitStatus.branchOverflow = 'wrap';
   const line = stripAnsi(renderProjectLine(ctx) ?? '');
-  assert.ok(line.includes('my-project｜git:(feature/add-auth)'), 'git should render as a separate segment');
+  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
 });
 
 test('renderToolsLine renders running and completed tools', () => {
@@ -1332,7 +1339,7 @@ test('parseTranscript detects active skills and distinct MCP servers from tool_u
 });
 
 test('parseTranscript sanitizes and caps active skill and MCP names', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'unsafe-activity.jsonl');
   const longSkill = `skill-${'x'.repeat(100)}`;
   const lines = [
@@ -1877,8 +1884,8 @@ test('renderUsageLine supports remaining-based usage display with used-percent c
     `expected remaining 5h usage with normal usage color, got: ${JSON.stringify(line)}`,
   );
   assert.ok(
-    line.includes('\x1b[35m15%\x1b[0m'),
-    `expected remaining weekly usage with used-percent warning color, got: ${JSON.stringify(line)}`,
+    line.includes('\x1b[31m15%\x1b[0m'),
+    `expected remaining weekly usage with used-percent critical color, got: ${JSON.stringify(line)}`,
   );
 });
 
@@ -1954,7 +1961,7 @@ test('renderUsageLine shows 7d reset countdown in bar mode when above threshold'
   assert.ok(line.includes('45%'), `should include 5h percentage in bar mode: ${line}`);
   assert.ok(line.includes('85%'), `should include 7d percentage: ${line}`);
   assert.ok(line.includes('(resets in 1d 4h)'), `should include 7d reset countdown in bar mode: ${line}`);
-  assert.ok(line.includes('｜'), `should render both usage windows above the threshold: ${line}`);
+  assert.ok(!line.includes(' | '), `should not pipe-separate the two usage windows: ${line}`);
 });
 
 test('renderUsageLine can hide reset label in bar mode', () => {
@@ -2346,7 +2353,7 @@ test('renderProjectLine strips control characters from project and branch links'
     isDirty: false,
     ahead: 0,
     behind: 0,
-    branchUrl: 'https://github.com/example/claude-hud/tree/feat%2Fname\u0007',
+    branchUrl: 'https://github.com/example/claude-statusline/tree/feat%2Fname\u0007',
   };
 
   const line = renderProjectLine(ctx) ?? '';
@@ -2570,7 +2577,7 @@ test('render expanded layout combines default merge-group elements when adjacent
   assert.equal(lines.length, 1, 'adjacent usage and context should share one expanded line');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].includes('│'), 'combined line should preserve the shared separator');
+  assert.ok(lines[0].includes(' | '), 'combined line should preserve the shared separator');
   const stripped = stripAnsi(lines[0]);
   assert.ok(stripped.includes('Usage 5h 30%'), `combined line should keep the default unpadded usage label: ${stripped}`);
   assert.ok(!stripped.includes('Usage  5h 30%'), `combined line should not pad the usage label: ${stripped}`);
@@ -2641,7 +2648,7 @@ test('render expanded layout combines custom merge groups in configured order', 
   assert.ok(lines[0].includes('my-project'), 'combined line should include project');
   assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
   assert.ok(lines[0].includes('Context'), 'combined line should include context');
-  assert.ok(lines[0].split('│').length - 1 >= 2, 'combined line should keep the merge separators');
+  assert.ok(lines[0].split(' | ').length - 1 >= 2, 'combined line should keep the merge separators');
 });
 
 test('render expanded layout aligns progress labels only after wrapping merged lines to separate lines', () => {
@@ -2715,7 +2722,7 @@ test('renderSessionTokensLine renders cumulative session token totals', () => {
   };
 
   const line = stripAnsi(renderSessionTokensLine(ctx) ?? '');
-  assert.equal(line, 'Tokens 12.8M (in: 7k, out: 28k, cache: 12.8M)');
+  assert.equal(line, 'Tokens 12.8M (in: 7k, out: 28k, cache: 12.8M, 0%)');
 });
 
 test('renderSessionLine includes compact session token summary when enabled', () => {
