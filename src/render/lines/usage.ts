@@ -20,7 +20,7 @@ export function renderUsageLine(
 ): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
-  const separator = display?.separator ?? '｜';
+  const separator = display?.separator ?? ' | ';
 
   if (display?.showUsage === false) {
     return null;
@@ -91,11 +91,11 @@ export function renderUsageLine(
       : null;
 
     if (fiveHourPart && sevenDayPart) {
-      return appendBalance(`${fiveHourPart}${separator}${sevenDayPart}`, balanceLabel, separator);
+      return appendBalance(`${fiveHourPart}, ​${sevenDayPart}`, balanceLabel, separator);
     }
     // 无 unit:6 周限额但有自然周 token (GLM)
     if (fiveHourPart && sevenDay === null && ctx.usageData.sevenDayTokens && ctx.usageData.sevenDayTokens > 0) {
-      return appendBalance(`${fiveHourPart}${separator}${label(`7d:${formatTokenCount(ctx.usageData.sevenDayTokens)}`, colors)}`, balanceLabel, separator);
+      return appendBalance(`${fiveHourPart}, ​${label(`7d ${formatTokenCount(ctx.usageData.sevenDayTokens)}`, colors)}`, balanceLabel, separator);
     }
     const compactLine = fiveHourPart ?? sevenDayPart;
     return compactLine ? appendBalance(compactLine, balanceLabel, separator) : null;
@@ -157,25 +157,25 @@ export function renderUsageLine(
       windowType: ctx.usageData.sevenDayWindowType,
       tokenCount: ctx.usageData.sevenDayTokens,
     });
-    return appendBalance(`${usageLabel} ${fiveHourPart}${separator}${sevenDayPart}`, balanceLabel, separator);
+    return appendBalance(`${usageLabel} ${fiveHourPart}, ​${sevenDayPart}`, balanceLabel, separator);
   }
 
-  // 无 unit:6 周限额但有自然周 token → 显示 7d:<tokens>
+  // 无 unit:6 周限额但有自然周 token → 显示 7d <tokens>
   if (sevenDay === null && ctx.usageData.sevenDayTokens && ctx.usageData.sevenDayTokens > 0) {
-    return appendBalance(`${usageLabel} ${fiveHourPart}${separator}${label(`7d:${formatTokenCount(ctx.usageData.sevenDayTokens)}`, colors)}`, balanceLabel, separator);
+    return appendBalance(`${usageLabel} ${fiveHourPart}, ​${label(`7d ${formatTokenCount(ctx.usageData.sevenDayTokens)}`, colors)}`, balanceLabel, separator);
   }
 
   return appendBalance(`${usageLabel} ${fiveHourPart}`, balanceLabel, separator);
 }
 
-/** DeepSeek usage display: $sessionCost/balance · 7d:weeklyTokens */
+/** DeepSeek usage display: $sessionCost/balance · 7d weeklyTokens */
 export function renderDeepSeekUsage(ctx: RenderContext): string {
   const usageData = ctx.usageData!;
   const colors = ctx.config?.colors;
   const balanceSymbol = usageData.currency === 'CNY' ? '¥' : '$';
   const balance = `${balanceSymbol}${usageData.balance ?? '?'}`;
   const weekly = usageData.weeklyTokens && usageData.weeklyTokens > 0
-    ? `7d:${formatTokenCount(usageData.weeklyTokens)}`
+    ? `7d ${formatTokenCount(usageData.weeklyTokens)}`
     : '';
   // DeepSeek pricing 为 USD，按余额币种换算（CNY ×7，USD 不变）
   const cost = estimateSessionCost(ctx.stdin, ctx.transcript?.sessionTokens);
