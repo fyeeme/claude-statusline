@@ -12,14 +12,6 @@ function formatTokens(n: number): string {
   return n.toString();
 }
 
-function calcCacheHitRate(inputTokens: number, cacheCreationTokens: number, cacheReadTokens: number): number | null {
-  const totalInput = inputTokens + cacheCreationTokens + cacheReadTokens;
-  if (totalInput === 0 || cacheReadTokens === 0) {
-    return null;
-  }
-  return Math.round((cacheReadTokens / totalInput) * 100);
-}
-
 export function renderSessionTokensLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;
   if (display?.showSessionTokens === false) {
@@ -43,13 +35,14 @@ export function renderSessionTokensLine(ctx: RenderContext): string | null {
   ];
 
   if (tokens.cacheCreationTokens > 0 || tokens.cacheReadTokens > 0) {
-    parts.push(`${t('format.cache')}: ${formatTokens(tokens.cacheCreationTokens + tokens.cacheReadTokens)}`);
+    const cacheTotal = tokens.cacheCreationTokens + tokens.cacheReadTokens;
+    // Cache hit rate = cache reads / effective input (fresh input + cache hits).
+    // cacheCreation is a one-off write cost, excluded so a warm cache does not
+    // always read as 100%.
+    const effectiveInput = tokens.inputTokens + tokens.cacheReadTokens;
+    const hitRate = effectiveInput > 0 ? Math.round((tokens.cacheReadTokens / effectiveInput) * 100) : 0;
+    parts.push(`${t('format.cache')}: ${formatTokens(cacheTotal)}, ${hitRate}%`);
   }
 
-  const cacheHitRate = calcCacheHitRate(tokens.inputTokens, tokens.cacheCreationTokens, tokens.cacheReadTokens);
-  if (cacheHitRate !== null) {
-    parts.push(`${t('format.cacheHit')}: ${cacheHitRate}%`);
-  }
-
-  return label(`Tokens ${formatTokens(total)} (${parts.join(' · ')})`, colors);
+  return label(`${t('label.tokens')} ${formatTokens(total)} (${parts.join(', ')})`, colors);
 }

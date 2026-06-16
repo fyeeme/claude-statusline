@@ -1,6 +1,6 @@
 import type { Messages } from "./types.js";
 
-export const zh: Messages = {
+export const zhHans: Messages = {
   // Labels
   "label.context": "上下文",
   "label.usage": "用量",
@@ -11,6 +11,11 @@ export const zh: Messages = {
   "label.hooks": "钩子",
   "label.estimatedCost": "估算",
   "label.cost": "费用",
+  "label.tokens": "词元",
+  "label.sessionStarted": "开始",
+  "label.lastReply": "上次回复",
+  "label.advisor": "顾问",
+  "label.compactions": "压缩次数",
 
   // Status
   "status.limitReached": "已达上限",
@@ -25,10 +30,13 @@ export const zh: Messages = {
   "format.cache": "缓存",
   "format.cacheHit": "命中",
   "format.out": "输出",
+  "format.tok": "词元",
   "format.tokPerSec": "tok/s",
+  "format.justNow": "刚刚",
+  "format.ago": "前",
 
   // Init
-  "init.initializing": "[claude-hud] 正在初始化...",
+  "init.initializing": "[claude-statusline] 正在初始化...",
   "init.macosNote":
-    "[claude-hud] 注意：在 macOS 上，您可能需要重启 Claude Code 才能显示 HUD。",
+    "[claude-statusline] 注意：在 macOS 上，您可能需要重启 Claude Code 才能显示 HUD。",
 };

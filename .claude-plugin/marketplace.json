@@ -1,20 +1,20 @@
 {
-  "name": "claude-hud",
+  "name": "claude-statusline",
   "owner": {
-    "name": "Jarrod Watts",
-    "email": "jarrodwattsyt@gmail.com"
+    "name": "fyeeme",
+    "url": "https://github.com/fyeeme"
   },
   "metadata": {
-    "description": "Real-time statusline HUD for Claude Code - context health, tool activity, agent tracking, and todo progress",
-    "version": "0.0.12"
+    "description": "Real-time statusline for Claude Code with GLM & DeepSeek provider support",
+    "version": "1.0.0"
   },
   "plugins": [
     {
-      "name": "claude-hud",
+      "name": "claude-statusline",
       "source": "./",
-      "description": "Real-time statusline showing context usage, active tools, running agents, and todo progress. Always visible below your input, zero config required.",
+      "description": "Real-time statusline showing context usage, GLM/DeepSeek account balance & weekly tokens, active tools, running agents, and todo progress. Zero-config for Anthropic; auto-detects GLM/DeepSeek via ANTHROPIC_BASE_URL.",
       "category": "monitoring",
-      "tags": ["hud", "statusline", "monitoring", "context", "tools", "agents", "todos"]
+      "tags": ["statusline", "monitoring", "glm", "deepseek", "usage", "context", "tools", "agents", "todos"]
     }
   ]
 }

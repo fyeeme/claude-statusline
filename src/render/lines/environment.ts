@@ -4,7 +4,7 @@ import { t } from "../../i18n/index.js";
 
 export function renderEnvironmentLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;
-  const separator = display?.separator ?? '｜';
+  const separator = display?.separator ?? ' | ';
   const totalCounts =
     ctx.claudeMdCount + ctx.rulesCount + ctx.mcpCount + ctx.hooksCount;
   const threshold = display?.environmentThreshold ?? 0;

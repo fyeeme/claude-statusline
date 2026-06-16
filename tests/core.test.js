@@ -20,10 +20,23 @@ function restoreEnvVar(name, value) {
 }
 
 async function getTranscriptCacheFile(configDir) {
-  const cacheDir = path.join(configDir, 'plugins', 'claude-hud', 'transcript-cache');
+  const cacheDir = path.join(configDir, 'plugins', 'claude-statusline', 'transcript-cache');
   const files = await readdir(cacheDir);
   assert.equal(files.length, 1, `expected exactly one transcript cache file in ${cacheDir}`);
   return path.join(cacheDir, files[0]);
+}
+
+async function parseTempTranscript(name, entries) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, name);
+  const lines = entries.map(entry => typeof entry === 'string' ? entry : JSON.stringify(entry));
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    return await parseTranscript(filePath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 test('getContextPercent returns 0 when data is missing', () => {
@@ -471,6 +484,31 @@ test('estimateSessionCost still calculates transcript-based Anthropic pricing', 
   assert.equal(formatUsd(estimate.totalUsd), '$1.09');
 });
 
+test('estimateSessionCost prices Claude Haiku 4.5 (and future 4.x minors)', () => {
+  const tokens = {
+    inputTokens: 1_000_000,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    outputTokens: 100_000,
+  };
+
+  const haiku45 = estimateSessionCost({ model: { display_name: 'Claude Haiku 4.5' } }, tokens);
+  assert.ok(haiku45, 'expected non-null estimate for Claude Haiku 4.5');
+  // 1M input @ $1 + 100k output @ $5 = $1 + $0.5 = $1.50
+  assert.equal(formatUsd(haiku45.totalUsd), '$1.50');
+
+  // Bare "Haiku 4" (short name) should also match.
+  const haiku4Bare = estimateSessionCost({ model: { display_name: 'Claude Haiku 4' } }, tokens);
+  assert.ok(haiku4Bare, 'expected non-null estimate for bare Claude Haiku 4');
+  assert.equal(formatUsd(haiku4Bare.totalUsd), '$1.50');
+
+  // Haiku 3.5 pricing stays on its own row.
+  const haiku35 = estimateSessionCost({ model: { display_name: 'Claude Haiku 3.5' } }, tokens);
+  assert.ok(haiku35, 'expected non-null estimate for Claude Haiku 3.5');
+  // 1M input @ $0.8 + 100k output @ $4 = $0.8 + $0.4 = $1.20
+  assert.equal(formatUsd(haiku35.totalUsd), '$1.20');
+});
+
 
 test('parseTranscript aggregates tools, agents, and todos', async () => {
   const fixturePath = fileURLToPath(new URL('./fixtures/transcript-basic.jsonl', import.meta.url));
@@ -490,7 +528,7 @@ test('parseTranscript aggregates tools, agents, and todos', async () => {
 });
 
 test('parseTranscript accumulates session token usage from assistant messages', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'session-tokens.jsonl');
   const lines = [
     JSON.stringify({
@@ -532,8 +570,124 @@ test('parseTranscript accumulates session token usage from assistant messages', 
   }
 });
 
+test('parseTranscript counts adjacent duplicate assistant usage once', async () => {
+  const usageEntry = {
+    type: 'assistant',
+    message: {
+      usage: {
+        input_tokens: 100,
+        output_tokens: 25,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 5,
+      },
+    },
+  };
+
+  const result = await parseTempTranscript('session-tokens-adjacent-duplicate.jsonl', [
+    usageEntry,
+    usageEntry,
+  ]);
+
+  assert.deepEqual(result.sessionTokens, {
+    inputTokens: 100,
+    outputTokens: 25,
+    cacheCreationTokens: 10,
+    cacheReadTokens: 5,
+  });
+});
+
+test('parseTranscript counts identical assistant usage separated by another line twice', async () => {
+  const usageEntry = {
+    type: 'assistant',
+    message: {
+      usage: {
+        input_tokens: 100,
+        output_tokens: 25,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 5,
+      },
+    },
+  };
+
+  const result = await parseTempTranscript('session-tokens-separated-duplicate.jsonl', [
+    usageEntry,
+    { type: 'user', timestamp: '2024-01-01T00:00:01.000Z' },
+    usageEntry,
+  ]);
+
+  assert.deepEqual(result.sessionTokens, {
+    inputTokens: 200,
+    outputTokens: 50,
+    cacheCreationTokens: 20,
+    cacheReadTokens: 10,
+  });
+});
+
+test('parseTranscript records the most recent compact_boundary and postTokens', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, 'compact-boundary.jsonl');
+  const lines = [
+    JSON.stringify({ type: 'assistant', timestamp: '2024-01-01T00:00:01.000Z' }),
+    JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      timestamp: '2024-01-01T00:05:00.000Z',
+      compactMetadata: { trigger: 'auto', preTokens: 170574, postTokens: 7679 },
+    }),
+    JSON.stringify({ type: 'assistant', timestamp: '2024-01-01T00:06:00.000Z' }),
+    // A second /compact later in the session should win.
+    JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      timestamp: '2024-01-01T00:10:00.000Z',
+      compactMetadata: { trigger: 'manual', preTokens: 180000, postTokens: 12345 },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.lastCompactBoundaryAt?.toISOString(), '2024-01-01T00:10:00.000Z');
+    assert.equal(result.lastCompactPostTokens, 12345);
+    assert.equal(result.compactionCount, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript ignores compact_boundary entries without a valid timestamp', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, 'compact-boundary-bad.jsonl');
+  const lines = [
+    JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      timestamp: 'not-a-date',
+      compactMetadata: { postTokens: 500 },
+    }),
+    JSON.stringify({
+      type: 'system',
+      subtype: 'something_else',
+      timestamp: '2024-01-01T00:05:00.000Z',
+      compactMetadata: { postTokens: 999 },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.lastCompactBoundaryAt, undefined);
+    assert.equal(result.lastCompactPostTokens, undefined);
+    assert.equal(result.compactionCount, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('parseTranscript captures the last assistant response timestamp', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'assistant-timestamp.jsonl');
   const lines = [
     JSON.stringify({ type: 'assistant', timestamp: '2024-01-01T00:00:05.000Z' }),
@@ -553,7 +707,7 @@ test('parseTranscript captures the last assistant response timestamp', async () 
 });
 
 test('parseTranscript ignores malformed session token values', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'session-tokens-malformed.jsonl');
   const lines = [
     JSON.stringify({
@@ -596,7 +750,7 @@ test('parseTranscript ignores malformed session token values', async () => {
 });
 
 test('TaskCreate taskId is preserved across TodoWrite and usable by TaskUpdate', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'taskid-preserve.jsonl');
   const lines = [
     JSON.stringify({
@@ -630,8 +784,50 @@ test('TaskCreate taskId is preserved across TodoWrite and usable by TaskUpdate',
   }
 });
 
+test('TaskCreate taskIds survive TodoWrite when two todos share the same content', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, 'taskid-duplicate.jsonl');
+  const lines = [
+    JSON.stringify({
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: { content: [{ type: 'tool_use', id: 'tc-1', name: 'TaskCreate', input: { taskId: 'a1', subject: 'Duplicate task' } }] },
+    }),
+    JSON.stringify({
+      timestamp: '2024-01-01T00:00:01.000Z',
+      message: { content: [{ type: 'tool_use', id: 'tc-2', name: 'TaskCreate', input: { taskId: 'a2', subject: 'Duplicate task' } }] },
+    }),
+    JSON.stringify({
+      timestamp: '2024-01-01T00:00:02.000Z',
+      message: { content: [{ type: 'tool_use', id: 'tw-1', name: 'TodoWrite', input: { todos: [
+        { content: 'Duplicate task', status: 'pending' },
+        { content: 'Duplicate task', status: 'pending' },
+      ] } }] },
+    }),
+    // Update the SECOND duplicate's taskId specifically.
+    JSON.stringify({
+      timestamp: '2024-01-01T00:00:03.000Z',
+      message: { content: [{ type: 'tool_use', id: 'tu-1', name: 'TaskUpdate', input: { taskId: 'a2', status: 'completed' } }] },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.todos.length, 2);
+    assert.equal(result.todos[0].content, 'Duplicate task');
+    assert.equal(result.todos[0].status, 'pending',
+      'first occurrence must remain pending when only the second was updated');
+    assert.equal(result.todos[1].content, 'Duplicate task');
+    assert.equal(result.todos[1].status, 'completed',
+      'second occurrence must be reachable by its own taskId after TodoWrite');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('TodoWrite without prior TaskCreate works as before (no regression)', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'todowrite-only.jsonl');
   const lines = [
     JSON.stringify({
@@ -665,7 +861,7 @@ test('TodoWrite without prior TaskCreate works as before (no regression)', async
 });
 
 test('parseTranscript prefers custom title over slug for session name', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'session-name-custom-title.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', slug: 'auto-slug-1' }),
@@ -684,7 +880,7 @@ test('parseTranscript prefers custom title over slug for session name', async ()
 });
 
 test('parseTranscript falls back to latest slug when custom title is missing', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'session-name-slug.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', slug: 'auto-slug-1' }),
@@ -709,7 +905,7 @@ test('parseTranscript returns empty result when file is missing', async () => {
 });
 
 test('parseTranscript tolerates malformed lines', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'malformed.jsonl');
   const lines = [
     '{"timestamp":"2024-01-01T00:00:00.000Z","message":{"content":[{"type":"tool_use","id":"tool-1","name":"Read"}]}}',
@@ -730,7 +926,7 @@ test('parseTranscript tolerates malformed lines', async () => {
 });
 
 test('parseTranscript extracts tool targets for common tools', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'targets.jsonl');
   const lines = [
     JSON.stringify({
@@ -757,8 +953,95 @@ test('parseTranscript extracts tool targets for common tools', async () => {
   }
 });
 
+test('parseTranscript collapses multiline Bash targets before truncating', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, 'bash-multiline.jsonl');
+  const lines = [
+    JSON.stringify({
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-1',
+            name: 'Bash',
+            input: { command: 'ID=foo\nccusage session --json\t| jq .total' },
+          },
+          {
+            type: 'tool_use',
+            id: 'tool-2',
+            name: 'Bash',
+            input: { command: ' \n\t ' },
+          },
+        ],
+      },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.tools.length, 2);
+    assert.equal(result.tools[0].target, 'ID=foo ccusage session --json...');
+    assert.equal(result.tools[1].target, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript extracts Skill tool target from non-empty input.skill', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, 'skill-target.jsonl');
+  const lines = [
+    JSON.stringify({
+      message: {
+        content: [
+          { type: 'tool_use', id: 'tool-1', name: 'Skill', input: { skill: 'prd-development' } },
+        ],
+      },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.tools.length, 1);
+    assert.equal(result.tools[0].name, 'Skill');
+    assert.equal(result.tools[0].target, 'prd-development');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript leaves Skill target empty when input.skill is missing or invalid', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
+  const filePath = path.join(dir, 'skill-target-invalid.jsonl');
+  const lines = [
+    JSON.stringify({
+      message: {
+        content: [
+          { type: 'tool_use', id: 'tool-1', name: 'Skill', input: {} },
+          { type: 'tool_use', id: 'tool-2', name: 'Skill', input: { skill: 123 } },
+          { type: 'tool_use', id: 'tool-3', name: 'Skill', input: { skill: '   ' } },
+        ],
+      },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.tools.length, 3);
+    assert.deepEqual(result.tools.map((tool) => tool.target), [undefined, undefined, undefined]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('parseTranscript truncates long bash commands in targets', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'bash.jsonl');
   const longCommand = 'echo ' + 'x'.repeat(50);
   const lines = [
@@ -781,7 +1064,7 @@ test('parseTranscript truncates long bash commands in targets', async () => {
 });
 
 test('parseTranscript handles edge-case lines and error statuses', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'edge-cases.jsonl');
   const lines = [
     '   ',
@@ -812,7 +1095,7 @@ test('parseTranscript handles edge-case lines and error statuses', async () => {
 });
 
 test('parseTranscript detects agents recorded with the Agent tool name', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'agent-tool-name.jsonl');
   const lines = [
     JSON.stringify({
@@ -847,8 +1130,147 @@ test('parseTranscript detects agents recorded with the Agent tool name', async (
   }
 });
 
+test('parseTranscript keeps background agents running until queue completion', async () => {
+  const result = await parseTempTranscript('background-agent-running.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-bg',
+            name: 'Task',
+            input: { subagent_type: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-bg', is_error: false },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'running');
+  assert.equal(result.agents[0].endTime, undefined);
+});
+
+test('parseTranscript completes background agents from matching queue-operation timestamps', async () => {
+  const result = await parseTempTranscript('background-agent-completed.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-bg',
+            name: 'Task',
+            input: { subagent_type: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-bg', is_error: false },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:01:17.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-1</task-id><tool-use-id>agent-bg</tool-use-id>',
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'completed');
+  assert.equal(result.agents[0].endTime?.toISOString(), '2024-01-01T00:01:17.000Z');
+});
+
+test('parseTranscript leaves foreground agent timing on tool_result', async () => {
+  const result = await parseTempTranscript('foreground-agent.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'agent-fg', name: 'Task', input: { subagent_type: 'explore' } },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-fg', is_error: false },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:01:17.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-1</task-id><tool-use-id>agent-fg</tool-use-id>',
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'completed');
+  assert.equal(result.agents[0].endTime?.toISOString(), '2024-01-01T00:00:04.000Z');
+});
+
+test('parseTranscript ignores malformed and unrelated queue-operation completions', async () => {
+  const result = await parseTempTranscript('background-agent-forged.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-bg',
+            name: 'Task',
+            input: { subagent_type: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-bg', is_error: false },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:01:17.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-1</task-id>',
+    },
+    {
+      timestamp: '2024-01-01T00:01:18.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-2</task-id><tool-use-id>other-agent</tool-use-id>',
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'running');
+  assert.equal(result.agents[0].endTime, undefined);
+});
+
 test('parseTranscript returns undefined targets for unknown tools', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const filePath = path.join(dir, 'unknown-tools.jsonl');
   const lines = [
     JSON.stringify({
@@ -870,7 +1292,7 @@ test('parseTranscript returns undefined targets for unknown tools', async () => 
 });
 
 test('parseTranscript returns partial results when stream creation fails', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-'));
   const transcriptDir = path.join(dir, 'transcript-dir');
   await mkdir(transcriptDir);
 
@@ -883,11 +1305,11 @@ test('parseTranscript returns partial results when stream creation fails', async
 });
 
 test('parseTranscript does not cache partial results when stream creation fails after file state lookup', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-transcript-cache-'));
   const configDir = path.join(dir, '.claude-test');
   const transcriptPath = path.join(dir, 'stream-failure.jsonl');
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const cacheDir = path.join(configDir, 'plugins', 'claude-hud', 'transcript-cache');
+  const cacheDir = path.join(configDir, 'plugins', 'claude-statusline', 'transcript-cache');
 
   process.env.CLAUDE_CONFIG_DIR = configDir;
   await writeFile(transcriptPath, '{"timestamp":"2024-01-01T00:00:00.000Z"}\n', 'utf8');
@@ -907,13 +1329,18 @@ test('parseTranscript does not cache partial results when stream creation fails 
 });
 
 test('parseTranscript reuses cached data when transcript state is unchanged', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-transcript-cache-'));
   const configDir = path.join(dir, '.claude-test');
   const transcriptPath = path.join(dir, 'cache-hit.jsonl');
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
   const initialLine = `${JSON.stringify({
     timestamp: '2024-01-01T00:00:00.000Z',
     message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: '/tmp/original.txt' } }] },
+  })}\n${JSON.stringify({
+    type: 'system',
+    subtype: 'compact_boundary',
+    timestamp: '2024-01-01T00:05:00.000Z',
+    compactMetadata: { trigger: 'auto', preTokens: 170574, postTokens: 7679 },
   })}\n`;
 
   process.env.CLAUDE_CONFIG_DIR = configDir;
@@ -924,6 +1351,7 @@ test('parseTranscript reuses cached data when transcript state is unchanged', as
     const first = await parseTranscript(transcriptPath);
     assert.equal(first.tools.length, 1);
     assert.equal(first.tools[0].target, '/tmp/original.txt');
+    assert.equal(first.compactionCount, 1);
 
     const stat = fs.statSync(transcriptPath);
     const corrupted = '#'.repeat(stat.size);
@@ -933,6 +1361,7 @@ test('parseTranscript reuses cached data when transcript state is unchanged', as
     const second = await parseTranscript(transcriptPath);
     assert.equal(second.tools.length, 1);
     assert.equal(second.tools[0].target, '/tmp/original.txt');
+    assert.equal(second.compactionCount, 1);
   } finally {
     restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
     await rm(dir, { recursive: true, force: true });
@@ -940,7 +1369,7 @@ test('parseTranscript reuses cached data when transcript state is unchanged', as
 });
 
 test('parseTranscript invalidates cached data when transcript state changes', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-transcript-cache-'));
   const configDir = path.join(dir, '.claude-test');
   const transcriptPath = path.join(dir, 'cache-invalidate.jsonl');
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -975,7 +1404,7 @@ test('parseTranscript invalidates cached data when transcript state changes', as
 });
 
 test('parseTranscript falls back to a fresh parse when the transcript cache is corrupted', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-transcript-cache-'));
   const configDir = path.join(dir, '.claude-test');
   const transcriptPath = path.join(dir, 'cache-corrupt.jsonl');
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1004,7 +1433,7 @@ test('parseTranscript falls back to a fresh parse when the transcript cache is c
 });
 
 test('parseTranscript invalidates transcript cache entries from older cache versions', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-transcript-cache-'));
   const configDir = path.join(dir, '.claude-test');
   const transcriptPath = path.join(dir, 'cache-version-upgrade.jsonl');
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1023,7 +1452,7 @@ test('parseTranscript invalidates transcript cache entries from older cache vers
     const cachePath = path.join(
       configDir,
       'plugins',
-      'claude-hud',
+      'claude-statusline',
       'transcript-cache',
       `${createHash('sha256').update(path.resolve(transcriptPath)).digest('hex')}.json`
     );
@@ -1050,8 +1479,8 @@ test('parseTranscript invalidates transcript cache entries from older cache vers
 });
 
 test('countConfigs honors project and global config locations', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
-  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-project-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-project-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1094,8 +1523,8 @@ test('countConfigs honors project and global config locations', async () => {
 });
 
 test('countConfigs returns outputStyle with project local precedence', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
-  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-project-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-project-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1129,7 +1558,7 @@ test('countConfigs returns outputStyle with project local precedence', async () 
 });
 
 test('countConfigs uses CLAUDE_CONFIG_DIR and matching .json sidecar for user scope', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const customConfigDir = path.join(homeDir, '.claude-2');
   const originalHome = process.env.HOME;
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1178,7 +1607,7 @@ test('countConfigs uses CLAUDE_CONFIG_DIR and matching .json sidecar for user sc
 });
 
 test('countConfigs still counts project .claude when cwd is home and CLAUDE_CONFIG_DIR points elsewhere', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const customConfigDir = path.join(homeDir, '.claude-2');
   const originalHome = process.env.HOME;
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -1219,7 +1648,7 @@ test('countConfigs still counts project .claude when cwd is home and CLAUDE_CONF
 });
 
 test('countConfigs avoids home cwd double-counting across counters and keeps CLAUDE.local.md', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1252,7 +1681,7 @@ test('countConfigs avoids home cwd double-counting across counters and keeps CLA
 });
 
 test('countConfigs excludes disabled user-scope MCPs', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1280,8 +1709,8 @@ test('countConfigs excludes disabled user-scope MCPs', async () => {
 });
 
 test('countConfigs excludes disabled project .mcp.json servers', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
-  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-project-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-project-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1312,7 +1741,7 @@ test('countConfigs excludes disabled project .mcp.json servers', async () => {
 });
 
 test('countConfigs handles all MCPs disabled', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1340,7 +1769,7 @@ test('countConfigs handles all MCPs disabled', async () => {
 });
 
 test('countConfigs tolerates rule directory read errors', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1359,7 +1788,7 @@ test('countConfigs tolerates rule directory read errors', async () => {
 });
 
 test('countConfigs ignores non-string values in disabledMcpServers', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1387,8 +1816,8 @@ test('countConfigs ignores non-string values in disabledMcpServers', async () =>
 });
 
 test('countConfigs counts same-named servers in different scopes separately', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
-  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-project-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-project-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1421,7 +1850,7 @@ test('countConfigs counts same-named servers in different scopes separately', as
 });
 
 test('countConfigs uses case-sensitive matching for disabled servers', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1451,9 +1880,9 @@ test('countConfigs uses case-sensitive matching for disabled servers', async () 
 
 // Regression test for GitHub Issue #3:
 // "MCP count showing 5 when user has 6, still showing 5 when all disabled"
-// https://github.com/jarrodwatts/claude-hud/issues/3
+// https://github.com/jarrodwatts/claude-statusline/issues/3
 test('Issue #3: MCP count updates correctly when servers are disabled', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1526,11 +1955,11 @@ test('Issue #3: MCP count updates correctly when servers are disabled', async ()
 // === Config cache tests ===
 
 async function getConfigCacheDir(configDir) {
-  return path.join(configDir, 'plugins', 'claude-hud', 'config-cache');
+  return path.join(configDir, 'plugins', 'claude-statusline', 'config-cache');
 }
 
 test('countConfigs cache: second call uses cache (mtime unchanged)', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1571,7 +2000,7 @@ test('countConfigs cache: second call uses cache (mtime unchanged)', async () =>
 });
 
 test('countConfigs cache: miss on file modification (mtime changes)', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1606,7 +2035,7 @@ test('countConfigs cache: miss on file modification (mtime changes)', async () =
 });
 
 test('countConfigs cache: miss on file creation (CLAUDE.md appears)', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1628,7 +2057,7 @@ test('countConfigs cache: miss on file creation (CLAUDE.md appears)', async () =
 });
 
 test('countConfigs cache: miss on file deletion (CLAUDE.md removed)', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1651,8 +2080,8 @@ test('countConfigs cache: miss on file deletion (CLAUDE.md removed)', async () =
 });
 
 test('countConfigs cache: miss on nested rules additions', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
-  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-proj-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-proj-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1676,9 +2105,9 @@ test('countConfigs cache: miss on nested rules additions', async () => {
 });
 
 test('countConfigs cache: isolation between different cwds', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
-  const projectA = await mkdtemp(path.join(tmpdir(), 'claude-hud-projA-'));
-  const projectB = await mkdtemp(path.join(tmpdir(), 'claude-hud-projB-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
+  const projectA = await mkdtemp(path.join(tmpdir(), 'claude-statusline-projA-'));
+  const projectB = await mkdtemp(path.join(tmpdir(), 'claude-statusline-projB-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1706,7 +2135,7 @@ test('countConfigs cache: isolation between different cwds', async () => {
 });
 
 test('countConfigs cache: isolation between different CLAUDE_CONFIG_DIRs', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const configA = path.join(homeDir, '.claude-a');
   const configB = path.join(homeDir, '.claude-b');
   const originalHome = process.env.HOME;
@@ -1735,7 +2164,7 @@ test('countConfigs cache: isolation between different CLAUDE_CONFIG_DIRs', async
 });
 
 test('countConfigs cache: corrupted cache file handled gracefully', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1764,7 +2193,7 @@ test('countConfigs cache: corrupted cache file handled gracefully', async () => 
 });
 
 test('countConfigs cache: malformed cache payload falls back to fresh recompute', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1812,7 +2241,7 @@ test('countConfigs cache: malformed cache payload falls back to fresh recompute'
 });
 
 test('countConfigs cache: first invocation without cache dir', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1843,7 +2272,7 @@ test('countConfigs cache: first invocation without cache dir', async () => {
 });
 
 test('countConfigs cache: works without cwd (user scope only)', async () => {
-  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-cc-'));
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-statusline-cc-'));
   const originalHome = process.env.HOME;
   process.env.HOME = homeDir;
 
@@ -1873,4 +2302,100 @@ test('countConfigs cache: works without cwd (user scope only)', async () => {
     process.env.HOME = originalHome;
     await rm(homeDir, { recursive: true, force: true });
   }
+});
+
+test('parseTranscript captures advisorModel from assistant records', async () => {
+  const result = await parseTempTranscript('advisor.jsonl', [
+    { type: 'user', slug: 'auto-slug' },
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:03:32.094Z',
+      advisorModel: 'claude-opus-4-7',
+      message: { content: [] },
+    },
+  ]);
+
+  assert.equal(result.advisorModel, 'claude-opus-4-7');
+});
+
+test('parseTranscript returns undefined advisorModel when not present', async () => {
+  const result = await parseTempTranscript('no-advisor.jsonl', [
+    { type: 'user', slug: 'auto-slug' },
+    { type: 'assistant', timestamp: '2026-05-28T09:03:32.094Z', message: { content: [] } },
+  ]);
+
+  assert.equal(result.advisorModel, undefined);
+});
+
+test('parseTranscript prefers the most recent advisorModel value', async () => {
+  const result = await parseTempTranscript('advisor-latest.jsonl', [
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: 'claude-sonnet-4-6',
+      message: { content: [] },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:05:00.000Z',
+      advisorModel: 'claude-opus-4-7',
+      message: { content: [] },
+    },
+  ]);
+
+  assert.equal(result.advisorModel, 'claude-opus-4-7');
+});
+
+test('parseTranscript ignores empty advisorModel strings', async () => {
+  const result = await parseTempTranscript('advisor-empty.jsonl', [
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: '',
+      message: { content: [] },
+    },
+  ]);
+
+  assert.equal(result.advisorModel, undefined);
+});
+
+test('parseTranscript ignores advisorModel on non-assistant records', async () => {
+  // Per Claude Code's documented schema the field is only meaningful on
+  // assistant records; reading it from user / custom-title / system records
+  // would let a malformed log poison the value.
+  const result = await parseTempTranscript('advisor-non-assistant.jsonl', [
+    {
+      type: 'user',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: 'claude-sonnet-4-6',
+    },
+    {
+      type: 'custom-title',
+      customTitle: 'My Session',
+      advisorModel: 'claude-haiku-4-5',
+    },
+    {
+      type: 'system',
+      subtype: 'compact_boundary',
+      advisorModel: 'claude-haiku-4-5',
+    },
+  ]);
+
+  assert.equal(result.advisorModel, undefined);
+});
+
+test('parseTranscript caps oversized advisorModel at the transcript length limit', async () => {
+  const result = await parseTempTranscript('advisor-oversized.jsonl', [
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: 'claude-' + 'x'.repeat(500),
+      message: { content: [] },
+    },
+  ]);
+
+  assert.ok(
+    typeof result.advisorModel === 'string' && result.advisorModel.length <= 64,
+    `expected capped advisorModel, got length ${result.advisorModel?.length}`,
+  );
 });

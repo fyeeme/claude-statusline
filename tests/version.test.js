@@ -44,7 +44,7 @@ test('_getClaudeVersionInvocation executes binaries directly on non-Windows', ()
   });
 });
 
-test('_getClaudeVersionInvocation wraps .cmd launches through COMSPEC on Windows', () => {
+test('_getClaudeVersionInvocation wraps .cmd launches through a fixed Windows cmd path', () => {
   const invocation = _getClaudeVersionInvocation(
     'C:\\Program Files\\Claude\\claude.cmd',
     'win32',
@@ -56,6 +56,21 @@ test('_getClaudeVersionInvocation wraps .cmd launches through COMSPEC on Windows
   });
 });
 
+test('_getClaudeVersionInvocation ignores COMSPEC on Windows', () => {
+  const originalComspec = process.env.COMSPEC;
+  process.env.COMSPEC = 'C:\\malicious\\cmd.exe';
+
+  try {
+    const invocation = _getClaudeVersionInvocation(
+      'C:\\Program Files\\Claude\\claude.cmd',
+      'win32'
+    );
+    assert.equal(invocation.file, 'C:\\Windows\\System32\\cmd.exe');
+  } finally {
+    restoreEnvVar('COMSPEC', originalComspec);
+  }
+});
+
 test('_getClaudeVersionInvocation executes .exe paths directly on Windows', () => {
   const invocation = _getClaudeVersionInvocation('C:\\Claude\\claude.exe', 'win32');
   assert.deepEqual(invocation, {
@@ -65,7 +80,7 @@ test('_getClaudeVersionInvocation executes .exe paths directly on Windows', () =
 });
 
 test('getClaudeCodeVersion persists cache across process resets under CLAUDE_CONFIG_DIR', async () => {
-  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-hud-version-'));
+  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-statusline-version-'));
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const binaryPath = path.join(tempHome, 'claude');
   const originalHome = process.env.HOME;
@@ -94,7 +109,7 @@ test('getClaudeCodeVersion persists cache across process resets under CLAUDE_CON
     assert.equal(execCalls, 1);
     assert.equal(resolveCalls, 1);
 
-    const cachePath = path.join(customConfigDir, 'plugins', 'claude-hud', '.claude-code-version-cache.json');
+    const cachePath = path.join(customConfigDir, 'plugins', 'claude-statusline', '.claude-code-version-cache.json');
     assert.equal(existsSync(cachePath), true);
 
     _resetVersionCache();
@@ -119,7 +134,7 @@ test('getClaudeCodeVersion persists cache across process resets under CLAUDE_CON
 });
 
 test('getClaudeCodeVersion refreshes when the resolved Claude binary path changes', async () => {
-  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-hud-version-symlink-'));
+  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-statusline-version-symlink-'));
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const binaryPathV1 = path.join(tempHome, 'claude-v1');
   const binaryPathV2 = path.join(tempHome, 'claude-v2');
@@ -161,7 +176,7 @@ test('getClaudeCodeVersion refreshes when the resolved Claude binary path change
 });
 
 test('getClaudeCodeVersion refreshes when the Claude binary mtime changes', async () => {
-  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-hud-version-invalidate-'));
+  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-statusline-version-invalidate-'));
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const binaryPath = path.join(tempHome, 'claude');
   const originalHome = process.env.HOME;
@@ -200,7 +215,7 @@ test('getClaudeCodeVersion refreshes when the Claude binary mtime changes', asyn
 });
 
 test('getClaudeCodeVersion executes the resolved binary path', async () => {
-  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-hud-version-windows-'));
+  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-statusline-version-windows-'));
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const binaryPath = path.join(tempHome, 'claude.cmd');
   const originalHome = process.env.HOME;
@@ -232,7 +247,7 @@ test('getClaudeCodeVersion executes the resolved binary path', async () => {
 });
 
 test('getClaudeCodeVersion uses the Windows wrapper invocation for .cmd binaries', async () => {
-  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-hud-version-wrapper-'));
+  const tempHome = await mkdtemp(path.join(tmpdir(), 'claude-statusline-version-wrapper-'));
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const binaryPath = path.join(tempHome, 'claude.cmd');
   const originalHome = process.env.HOME;

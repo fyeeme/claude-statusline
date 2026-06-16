@@ -8,17 +8,17 @@ Real-time statusline showing context usage, active tools, running agents, and to
 
 **Step 1: Add the marketplace**
 ```
-/plugin marketplace add jarrodwatts/claude-hud
+/plugin marketplace add jarrodwatts/claude-statusline
 ```
 
 **Step 2: Install the plugin**
 ```
-/plugin install claude-hud
+/plugin install claude-statusline
 ```
 
 **Step 3: Configure the statusline**
 ```
-/claude-hud:setup
+/claude-statusline:setup
 ```
 
 Done. Restart Claude Code to load the new statusLine config, then the HUD will appear.
@@ -44,21 +44,21 @@ If not installed or outdated, direct user to https://claude.ai/code
 
 Run this command in Claude Code:
 ```
-/plugin marketplace add jarrodwatts/claude-hud
+/plugin marketplace add jarrodwatts/claude-statusline
 ```
 
 ### Step 3: Install the Plugin
 
 Run this command in Claude Code:
 ```
-/plugin install claude-hud
+/plugin install claude-statusline
 ```
 
 ### Step 4: Configure the Statusline
 
 Run this command in Claude Code:
 ```
-/claude-hud:setup
+/claude-statusline:setup
 ```
 
 This adds the statusLine configuration to the user's settings.json.
@@ -77,9 +77,9 @@ Ask the user: "Would you like to star the repository to support the project?"
 Only if they explicitly agree, run:
 ```bash
 if gh help repo 2>/dev/null | grep -q "star:"; then
-  gh repo star jarrodwatts/claude-hud
+  gh repo star jarrodwatts/claude-statusline
 else
-  gh api -X PUT /user/starred/jarrodwatts/claude-hud
+  gh api -X PUT /user/starred/jarrodwatts/claude-statusline
 fi
 ```
 
@@ -96,7 +96,7 @@ Technical documentation for agents who need to understand, modify, or debug Clau
 <plugin>
   <name>Claude HUD</name>
   <description>Real-time statusline showing context usage, active tools, running agents, and todo progress. Always visible below your input, zero config required.</description>
-  <repository>github.com/jarrodwatts/claude-hud</repository>
+  <repository>github.com/jarrodwatts/claude-statusline</repository>
   <license>MIT</license>
 </plugin>
 
@@ -170,7 +170,7 @@ Technical documentation for agents who need to understand, modify, or debug Clau
       Searches cwd, ~/.claude/, and project .claude/ directories.
     </file>
     <file name="config.ts" purpose="Load and validate user configuration">
-      Reads config.json from ~/.claude/plugins/claude-hud/.
+      Reads config.json from ~/.claude/plugins/claude-statusline/.
       Validates and merges user settings with defaults.
       Exports HudConfig interface and loadConfig function.
     </file>
@@ -236,7 +236,7 @@ Technical documentation for agents who need to understand, modify, or debug Clau
   <manifest>.claude-plugin/plugin.json</manifest>
   <manifest_content>
     {
-      "name": "claude-hud",
+      "name": "claude-statusline",
       "description": "Real-time statusline HUD for Claude Code",
       "version": "0.0.1",
       "author": { "name": "Jarrod Watts", "url": "https://github.com/jarrodwatts" }
@@ -245,15 +245,15 @@ Technical documentation for agents who need to understand, modify, or debug Clau
   <note>The plugin.json contains metadata only. statusLine is NOT a valid plugin.json field.</note>
 
   <statusline_config>
-    The /claude-hud:setup command adds statusLine to ~/.claude/settings.json with an auto-updating command that finds the latest installed version.
+    The /claude-statusline:setup command adds statusLine to ~/.claude/settings.json with an auto-updating command that finds the latest installed version.
     Updates are automatic - no need to re-run setup after updating the plugin.
   </statusline_config>
 </plugin_configuration>
 
 <development>
   <setup>
-    git clone https://github.com/jarrodwatts/claude-hud
-    cd claude-hud
+    git clone https://github.com/jarrodwatts/claude-statusline
+    cd claude-statusline
     npm ci
     npm run build
   </setup>
@@ -297,13 +297,13 @@ Technical documentation for agents who need to understand, modify, or debug Clau
 <troubleshooting>
   <issue name="Statusline not appearing">
     <cause>Plugin not installed or statusLine not configured</cause>
-    <solution>Run: /plugin marketplace add jarrodwatts/claude-hud</solution>
-    <solution>Run: /plugin install claude-hud</solution>
-    <solution>Run: /claude-hud:setup</solution>
+    <solution>Run: /plugin marketplace add jarrodwatts/claude-statusline</solution>
+    <solution>Run: /plugin install claude-statusline</solution>
+    <solution>Run: /claude-statusline:setup</solution>
     <solution>Ensure Claude Code is v1.0.80 or later</solution>
   </issue>
 
-  <issue name="Shows [claude-hud] Initializing...">
+  <issue name="Shows [claude-statusline] Initializing...">
     <cause>No stdin data received (normal on first invocation)</cause>
     <solution>This is expected briefly on startup, should resolve automatically</solution>
   </issue>

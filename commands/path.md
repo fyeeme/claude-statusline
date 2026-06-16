@@ -3,9 +3,9 @@ description: "Configure terminal width fallback and project path display — fix
 allowed-tools: Read, Write, Edit, Bash, AskUserQuestion
 ---
 
-# Configure claude-hud Terminal Width & Path Display
+# Configure claude-statusline Terminal Width & Path Display
 
-**FIRST**: Use the Read tool to load `~/.claude/plugins/claude-hud/config.json` if it exists.
+**FIRST**: Use the Read tool to load `~/.claude/plugins/claude-statusline/config.json` if it exists.
 Store the current config values (especially `terminalWidth`, `pathLevels`, `display.showProject`).
 
 ---
@@ -22,9 +22,9 @@ echo "Terminal columns (env): ${COLUMNS:-unset}"
 echo "CWD: $(pwd)"
 
 # Show current config if exists
-if [ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/claude-hud/config.json" ]; then
+if [ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/claude-statusline/config.json" ]; then
   echo "--- Current config ---"
-  cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/claude-hud/config.json"
+  cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/claude-statusline/config.json"
 fi
 ```
 
@@ -86,7 +86,7 @@ Summarize changes and ask: "Apply these settings?"
 
 ## Step 4: Write Configuration
 
-Write to `~/.claude/plugins/claude-hud/config.json`.
+Write to `~/.claude/plugins/claude-statusline/config.json`.
 **Merge with existing config** — do NOT overwrite other settings.
 
 | Setting | Config Key | Values |
@@ -100,7 +100,7 @@ Write to `~/.claude/plugins/claude-hud/config.json`.
 ## Step 5: Verify
 
 ```bash
-cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/claude-hud/config.json" | grep -E '(terminalWidth|showProject|pathLevels)'
+cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/claude-statusline/config.json" | grep -E '(terminalWidth|showProject|pathLevels)'
 ```
 
 Tell the user the changes are applied immediately — no restart needed.

@@ -1,6 +1,6 @@
-# Claude HUD (GLM Fork) 安装指南
+# Claude Statusline (GLM Fork) 安装指南
 
-> 适用于未安装原版 claude-hud 的用户，直接安装我们的 fork 版本。
+> 适用于未安装原版 claude-statusline 的用户，直接安装我们的 fork 版本。
 
 ## 前置要求
 
@@ -14,8 +14,8 @@
 ### 1. 克隆 fork 仓库
 
 ```bash
-git clone https://github.com/linzikg/claude-hud.git ~/.claude/plugins/cache/claude-hud-fork
-cd ~/.claude/plugins/cache/claude-hud-fork
+git clone https://github.com/fyeeme/claude-statusline.git ~/.claude/plugins/cache/claude-statusline
+cd ~/.claude/plugins/cache/claude-statusline
 ```
 
 ### 2. 构建项目
@@ -36,10 +36,10 @@ npm run build
 ```json
 {
   "extraKnownMarketplaces": {
-    "claude-hud": {
+    "claude-statusline": {
       "source": {
         "source": "github",
-        "repo": "linzikg/claude-hud"
+        "repo": "fyeeme/claude-statusline"
       }
     }
   }
@@ -53,7 +53,7 @@ npm run build
 ```json
 {
   "enabledPlugins": {
-    "claude-hud@claude-hud": true
+    "claude-statusline@claude-statusline": true
   }
 }
 ```
@@ -68,7 +68,7 @@ npm run build
 {
   "statusLine": {
     "type": "command",
-    "command": "bash -c 'glm_env=$(mktemp); printf \"%s\\n\" \"ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}\" \"ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}\" > \"$glm_env\"; plugin_dir=$(ls -d \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/plugins/cache/claude-hud-fork/*/ 2>/dev/null | sort -t/ -k1,1 | tail -1); if [ -z \"$plugin_dir\" ]; then plugin_dir=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-hud-fork/\"; fi; exec \"$(which bun || which node)\" --env-file \"$glm_env\" \"${plugin_dir}src/index.ts\"; rm -f \"$glm_env\"'"
+    "command": "bash -c 'glm_env=$(mktemp); printf \"%s\\n\" \"ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}\" \"ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}\" > \"$glm_env\"; plugin_dir=$(ls -d \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/plugins/cache/claude-statusline/*/ 2>/dev/null | sort -t/ -k1,1 | tail -1); if [ -z \"$plugin_dir\" ]; then plugin_dir=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-statusline/\"; fi; exec \"$(which bun || which node)\" --env-file \"$glm_env\" \"${plugin_dir}src/index.ts\"; rm -f \"$glm_env\"'"
   }
 }
 ```
@@ -81,7 +81,7 @@ npm run build
 {
   "statusLine": {
     "type": "command",
-    "command": "bash -c 'glm_env=$(mktemp); printf \"%s\\n\" \"ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}\" \"ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}\" > \"$glm_env\"; plugin_dir=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-hud-fork/\"; exec node --env-file \"$glm_env\" \"${plugin_dir}dist/index.js\"; rm -f \"$glm_env\"'"
+    "command": "bash -c 'glm_env=$(mktemp); printf \"%s\\n\" \"ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}\" \"ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}\" > \"$glm_env\"; plugin_dir=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-statusline/\"; exec node --env-file \"$glm_env\" \"${plugin_dir}dist/index.js\"; rm -f \"$glm_env\"'"
   }
 }
 ```
@@ -125,7 +125,7 @@ fork 仓库直接放在插件缓存目录，编译后立即生效：
 
 ```bash
 # 1. 进入 fork 仓库目录
-cd ~/.claude/plugins/cache/claude-hud-fork
+cd ~/.claude/plugins/cache/claude-statusline
 
 # 2. 拉取最新代码
 git pull
@@ -142,14 +142,14 @@ npm run build
 
 ```bash
 # 1. 在开发目录构建
-cd /path/to/your/claude-hud
+cd /path/to/your/claude-statusline
 npm run build
 
 # 2. 同步源码和编译产物到插件缓存
 #    注意：src/ 和 dist/ 都需要同步，因为 statusLine 使用 bun 运行 src/
 rsync -av --delete \
   src/ dist/ package.json \
-  ~/.claude/plugins/cache/claude-hud-fork/
+  ~/.claude/plugins/cache/claude-statusline/
 
 # 3. 重启 Claude Code 即可生效
 ```
@@ -158,21 +158,21 @@ rsync -av --delete \
 
 ```bash
 # 1. 在开发目录构建
-cd /path/to/your/claude-hud
+cd /path/to/your/claude-statusline
 npm run build
 
 # 2. 删除旧的 fork 目录并重新克隆/复制
-rm -rf ~/.claude/plugins/cache/claude-hud-fork
-cp -r /path/to/your/claude-hud ~/.claude/plugins/cache/claude-hud-fork
+rm -rf ~/.claude/plugins/cache/claude-statusline
+cp -r /path/to/your/claude-statusline ~/.claude/plugins/cache/claude-statusline
 
 # 3. 安装依赖（如果 node_modules 不在复制范围内）
-cd ~/.claude/plugins/cache/claude-hud-fork
+cd ~/.claude/plugins/cache/claude-statusline
 npm install --production
 
 # 4. 重启 Claude Code
 ```
 
-> **提示**：如果 HUD 不更新，检查 `settings.json` 中 `statusLine` 命令指向的路径是否正确（`claude-hud-fork` vs `claude-hud/claude-hud/<version>`）。
+> **提示**：如果 HUD 不更新，检查 `settings.json` 中 `statusLine` 命令指向的路径是否正确（`claude-statusline` vs `claude-statusline/claude-statusline/<version>`）。
 
 ## GLM 用量显示说明
 
@@ -195,12 +195,12 @@ npm install --production
 1. 确认 `ANTHROPIC_BASE_URL` 指向 GLM 域名（`open.bigmodel.cn` 或 `api.z.ai`）
 2. 确认 `ANTHROPIC_AUTH_TOKEN` 有效
 3. 检查 statusLine 命令中是否包含 `--env-file "$glm_env"` 传递认证变量
-4. 清除缓存：`rm -f ~/.claude/plugins/claude-hud/.usage-cache.json`
+4. 清除缓存：`rm -f ~/.claude/plugins/claude-statusline/.usage-cache.json`
 
 ### 插件未加载
 
 确认 `settings.json` 中同时包含：
-- `enabledPlugins` 中的 `claude-hud@claude-hud`
+- `enabledPlugins` 中的 `claude-statusline@claude-statusline`
 - `extraKnownMarketplaces` 中的市场源配置
 
 ### 更新后无变化

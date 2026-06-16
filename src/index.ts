@@ -9,13 +9,12 @@ import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
 import { resolveEffortLevel } from "./effort.js";
 import { applyContextWindowFallback } from "./context-cache.js";
-import { getUsageFromExternalSnapshot } from "./external-usage.js";
+import { getUsageFromExternalSnapshot, writeExternalUsageSnapshot } from "./external-usage.js";
 import { getUsage } from "./usage/index.js";
-import type { UsageStrategyDeps } from "./usage/index.js";
 import { setLanguage, t } from "./i18n/index.js";
 import type { RenderContext } from "./types.js";
 
-export { getUsageFromExternalSnapshot } from "./external-usage.js";
+export { getUsageFromExternalSnapshot, writeExternalUsageSnapshot } from "./external-usage.js";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
@@ -23,6 +22,7 @@ export type MainDeps = {
   readStdin: typeof readStdin;
   getUsage: typeof getUsage;
   getUsageFromExternalSnapshot: typeof getUsageFromExternalSnapshot;
+  writeExternalUsageSnapshot: typeof writeExternalUsageSnapshot;
   parseTranscript: typeof parseTranscript;
   countConfigs: typeof countConfigs;
   getGitStatus: typeof getGitStatus;
@@ -37,11 +37,35 @@ export type MainDeps = {
   log: (...args: unknown[]) => void;
 };
 
+/**
+ * Returns true when the HUD is disabled for this invocation via the
+ * CLAUDE_STATUSLINE_DISABLE environment variable (the legacy
+ * CLAUDE_HUD_DISABLE name is still honoured for backward compatibility).
+ * Any non-blank value other than an explicit negative (`0`, `false`, `off`,
+ * `no`, case-insensitive) disables the HUD, so users can launch sessions
+ * without it (`CLAUDE_STATUSLINE_DISABLE=1 claude`) while keeping the
+ * statusLine entry in settings.json intact.
+ */
+export function isHudDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = (env.CLAUDE_STATUSLINE_DISABLE ?? env.CLAUDE_HUD_DISABLE)?.trim().toLowerCase();
+  if (value === undefined || value === "") {
+    return false;
+  }
+  return value !== "0" && value !== "false" && value !== "off" && value !== "no";
+}
+
 export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
+  if (isHudDisabled()) {
+    // Print nothing so Claude Code renders an empty statusline, and skip all
+    // work (stdin parse, transcript scan, git) for the ~300ms polling loop.
+    return;
+  }
+
   const deps: MainDeps = {
     readStdin,
     getUsage,
     getUsageFromExternalSnapshot,
+    writeExternalUsageSnapshot,
     parseTranscript,
     countConfigs,
     getGitStatus,
@@ -75,7 +99,10 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
     const transcriptPath = stdin.transcript_path ?? "";
     const transcript = await deps.parseTranscript(transcriptPath);
 
-    deps.applyContextWindowFallback(stdin, {}, transcript.sessionName);
+    deps.applyContextWindowFallback(stdin, {}, transcript.sessionName, {
+      lastCompactBoundaryAt: transcript.lastCompactBoundaryAt,
+      lastCompactPostTokens: transcript.lastCompactPostTokens,
+    });
 
     const { claudeMdCount, rulesCount, mcpCount, hooksCount, outputStyle } =
       await deps.countConfigs(stdin.cwd);
@@ -86,12 +113,26 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
       ? await deps.getGitStatus(stdin.cwd)
       : null;
 
-    // Platform-aware usage strategy: detects subscription and routes accordingly
     let usageData: RenderContext["usageData"] = null;
-    if (config.display.showUsage !== false) {
-      usageData = await deps.getUsage(stdin);
+    const shouldReadUsage = config.display.showUsage !== false;
+    const shouldWriteUsage = Boolean(config.display.externalUsageWritePath);
+    const stdinUsage = shouldReadUsage || shouldWriteUsage
+      ? await deps.getUsage(stdin)
+      : null;
+
+    if (shouldWriteUsage && stdinUsage) {
+      deps.writeExternalUsageSnapshot(config, stdinUsage, deps.now());
+    }
+
+    if (shouldReadUsage) {
+      usageData = stdinUsage;
       if (!usageData) {
         usageData = deps.getUsageFromExternalSnapshot(config, deps.now());
+      } else if (config.display.externalUsagePath) {
+        const ext = deps.getUsageFromExternalSnapshot(config, deps.now());
+        if (ext?.balanceLabel != null) {
+          usageData = { ...usageData, balanceLabel: ext.balanceLabel };
+        }
       }
     }
 
@@ -135,7 +176,7 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
     deps.render(ctx);
   } catch (error) {
     deps.log(
-      "[claude-hud] Error:",
+      "[claude-statusline] Error:",
       error instanceof Error ? error.message : "Unknown error",
     );
   }

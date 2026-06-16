@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import type { MemoryInfo } from './types.js';
 
 type MemoryReader = () => { totalBytes: number; freeBytes: number };
@@ -21,10 +22,35 @@ export function parseVmStat(
   };
 }
 
+export function parseLinuxMeminfo(
+  output: string,
+): { totalBytes: number; freeBytes: number } | null {
+  const totalMatch = output.match(/^MemTotal:\s+(\d+)\s+kB/m);
+  const availMatch = output.match(/^MemAvailable:\s+(\d+)\s+kB/m);
+  if (!totalMatch || !availMatch) return null;
+
+  const totalBytes = Number(totalMatch[1]) * 1024;
+  const freeBytes = Number(availMatch[1]) * 1024;
+  if (!Number.isFinite(totalBytes) || !Number.isFinite(freeBytes)) {
+    return null;
+  }
+
+  return { totalBytes, freeBytes };
+}
+
 const readDefaultMemory: MemoryReader = () => ({
   totalBytes: os.totalmem(),
   freeBytes: os.freemem(),
 });
+
+const readLinuxMemory: MemoryReader = () => {
+  try {
+    const content = readFileSync('/proc/meminfo', 'utf8');
+    return parseLinuxMeminfo(content) ?? readDefaultMemory();
+  } catch {
+    return readDefaultMemory();
+  }
+};
 
 const readMacOSMemory: MemoryReader = () => {
   try {
@@ -43,7 +69,9 @@ const readMacOSMemory: MemoryReader = () => {
 };
 
 let readMemory: MemoryReader =
-  process.platform === 'darwin' ? readMacOSMemory : readDefaultMemory;
+  process.platform === 'darwin' ? readMacOSMemory :
+  process.platform === 'linux' ? readLinuxMemory :
+  readDefaultMemory;
 
 export async function getMemoryUsage(): Promise<MemoryInfo | null> {
   try {
@@ -88,5 +116,9 @@ export function formatBytes(bytes: number): string {
 }
 
 export function _setMemoryReaderForTests(reader: MemoryReader | null): void {
-  readMemory = reader ?? (process.platform === 'darwin' ? readMacOSMemory : readDefaultMemory);
+  readMemory = reader ?? (
+    process.platform === 'darwin' ? readMacOSMemory :
+    process.platform === 'linux' ? readLinuxMemory :
+    readDefaultMemory
+  );
 }

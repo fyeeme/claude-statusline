@@ -1,8 +1,95 @@
 # Changelog
 
-All notable changes to Claude HUD will be documented in this file.
+All notable changes to Claude Statusline will be documented in this file.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-06-16
+
+### Changed — Rename & reposition
+- Renamed from `claude-hud` to **`claude-statusline`** as an independent project focused on third-party provider support.
+- Repo moved to `fyeeme/claude-statusline`.
+- Data directory changed from `~/.claude/plugins/claude-hud` to `~/.claude/plugins/claude-statusline` (GLM calibration state rebuilds on first run).
+- Statusline command names: `/claude-hud:setup|configure|path` → `/claude-statusline:*`.
+- Environment kill switch renamed `CLAUDE_HUD_DISABLE` → `CLAUDE_STATUSLINE_DISABLE` (legacy name still honoured for backward compatibility).
+- Log/debug prefixes `[claude-hud:*]` → `[claude-statusline:*]` (use `DEBUG=claude-statusline` to enable).
+
+### Added — Provider support (the reason this fork exists)
+- **GLM provider**: native usage tracking — 5h/7d windows, weekly token count, semantic window types (rolling/cycle), GLM-aware limit detection (5h===100% only).
+- **DeepSeek provider**: account balance, natural-week tokens, provider-maintained pricing with session cost estimate (CNY balance converts USD cost at ×7).
+- `getUsage` platform router in `src/index.ts` (anthropic/glm/deepseek auto-detected via `ANTHROPIC_BASE_URL`).
+- Cache hit rate in session tokens line (`cache: <total>, <rate>%`; rate = cacheRead / effective input).
+- Configurable `display.separator` (default ` | `) and `usage.{fiveHourRefreshSec,sevenDayRefreshSec}`.
+
+### Changed — UI defaults (fork repositioning)
+- Color: context/usage default to `dim` (grey) below threshold; warning at ≥65, critical at ≥85 (upstream was green/blue, 70/75/90).
+- 5h/7d usage windows separated by `, ` with zero-width soft-wrap break instead of a pipe.
+- Merged upstream `release-0.2.0` (usageValue/usageCompact/elapsed time formats/added-dirs/session-time, env-disable kill switch, etc.).
+
+### Notes
+- `CLAUDE_HUD_DISABLE` remains a supported alias; existing user aliases/scripts keep working.
+
+## [0.2.0] - 2026-06-15
+
+### Added
+- Add opt-in session compaction count display from reliable transcript `compact_boundary` entries (#609).
+- Add `CLAUDE_HUD_DISABLE` as a per-session environment kill switch that exits before stdin, transcript, config, or git work (#610).
+
+### Changed
+- Sync `/claude-hud:configure` documentation with current display options, including compaction count, Skills, MCP, prompt cache, memory, cost, and reset-label controls (#613).
+
+### Dependencies
+- Bump `@types/node` from 25.9.2 to 25.9.3 (#614).
+
+## [0.1.1] - 2026-06-09
+
+### Added
+- Add default-off Skills and MCP activity lines, with sanitized active names and Skill-tool suppression when the Skills line is enabled (#527, #595).
+- Add optional advisor model display with sanitized transcript-derived and override labels (#573).
+- Add `display.autoCompactWindow` support for context denominator calculations, including token-display denominator handling (#589).
+
+### Fixed
+- Render external `balance_label` values alongside stdin `rate_limits` instead of treating them as mutually exclusive (#598, #599).
+- Preserve inherited terminal width in setup-generated statusline commands before probing `/dev/tty`, fixing narrow-pane wrapping/flicker in terminals without a controlling TTY (#581).
+- Use a lightweight Windows Node launcher for PowerShell/cmd setup instead of a PowerShell wrapper on every statusline refresh, reducing Windows render-time overhead while preserving update discovery (#555).
+- Collapse whitespace in multiline Bash tool targets before truncation so the tools line stays single-line (#594).
+- Harden advisor, Skills, and MCP labels against control characters, terminal escapes, bidi controls, and oversized activity names (#573, #595).
+- Validate `autoCompactWindow` as an integer before using it in context calculations (#589).
+
+### Changed
+- Clarify in release docs that `.claude-plugin/plugin.json` is the Claude Code update/cache version source (#591).
+
+### Dependencies
+- Bump `@types/node` from 25.9.1 to 25.9.2 (#593).
+- Refresh the lockfile to clear the transitive `brace-expansion` audit advisory.
+
+## [0.1.0] - 2026-06-03
+
+### Added
+- Effort-level display in the model bracket (#471).
+- Native stdin `cost.total_cost_usd` support, external usage snapshot fallback, prompt-cache countdown, and optional JSON snapshots for stdin `rate_limits` (#381, #477, #478, #570).
+- Vertex AI provider detection with cost estimation disabled for Vertex sessions (#479).
+- Usage display controls for reset labels, absolute/relative reset times, compact display, remaining mode, elapsed/percentage mode, and third-party balance labels (#415, #421, #433, #536, #541, #572).
+- Layout and configuration controls for expanded merge groups, wrapped branch display, terminal width fallbacks, `/add-dir` workspace directories, progress bar colors, tool name wrapping/truncation, and custom line placement (#474, #476, #501, #502, #505, #571, #575).
+- Session start date, last response timestamp, and Skill tool target display (#497, #537).
+
+### Changed
+- Setup is more defensive around marketplace install paths, Windows runtime guidance, Git Bash/MSYS routing, existing statusline backups, and PowerShell wrapper generation (#399, #473, #532, #538, #546, #567).
+- Rendering now handles narrow terminals, unknown terminal widths, CJK ambiguous-width glyphs, branch links, progress-label padding, OSC 8 hyperlinks, and tool wrapping more consistently (#427, #439, #443, #489, #509, #518, #561, #571).
+- Chinese documentation was added and later synced with the English README (#435, #557).
+
+### Fixed
+- Bounded stdin reads to prevent statusline hangs (#378).
+- Context and cache behavior for initial zero-percent frames, post-compact resets, live zero-percent usage, nonzero token totals with zero usage, and fallback todo rendering (#430, #460, #492, #508, #579).
+- Transcript and task state handling for default subagent labels, duplicate-content `TodoWrite` task IDs, background-agent timing, stale transcript agent caches, and adjacent session usage deduplication (#455, #456, #515, #560, #579).
+- Git and render correctness for renamed files, quoted arrow filenames, Unicode paths, line diffs, and OSC link truncation (#451, #543, #561).
+- Platform-specific behavior for Bedrock provider labels, Linux memory parsing, Windows console flashes, unsafe progress-bar code points, and PowerShell setup output (#468, #523, #567).
+- Speed and cost display edge cases, including native cost fallback, speed cache scoping, short-window accumulation, Claude Haiku 4.x pricing, enterprise aliases, and effort schema changes (#440, #453, #486, #491, #496).
+- Windows + PowerShell `/claude-hud:setup` now writes a `statusline.ps1` wrapper with a guarded width fallback and corrected version-directory glob (#521).
+- Added Windows PowerShell 5.1 guidance for writing `settings.json` without a UTF-8 BOM.
+
+### Dependencies
+- Bumped TypeScript and `@types/node` development dependencies across the 0.1.0 cycle (#383, #426, #465, #533, #554, #565).
 
 ## [0.0.12] - 2026-04-04
 

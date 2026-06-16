@@ -274,7 +274,7 @@ if (sevenDayStartAt === prevCycleStart) {  // 同一周期
 
 ### 缓存文件
 
-路径：`~/.claude/.claude-hud/.usage-cache.json`
+路径：`~/.claude/.claude-statusline/.usage-cache.json`
 
 ### 缓存结构
 
@@ -471,7 +471,7 @@ calibratedAtPct 更新为 45
 
 ## 日志格式
 
-日志文件路径：`~/.claude/plugins/claude-hud/usage.log`，上限 512KB，超出自动截断保留最后 200 行。
+日志文件路径：`~/.claude/plugins/claude-statusline/usage.log`，上限 512KB，超出自动截断保留最后 200 行。
 
 ### 日志行类型
 

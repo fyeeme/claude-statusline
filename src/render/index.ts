@@ -3,20 +3,25 @@ import { DEFAULT_ELEMENT_ORDER, DEFAULT_MERGE_GROUPS } from '../config.js';
 import type { RenderContext } from '../types.js';
 import { renderSessionLine } from './session-line.js';
 import { renderToolsLine } from './tools-line.js';
+import { renderSkillsLine, renderMcpLine } from './skills-mcp-line.js';
 import { renderAgentsLine } from './agents-line.js';
 import { renderTodosLine } from './todos-line.js';
 import {
   renderIdentityLine,
   renderProjectLine,
+  renderAddedDirsLine,
   renderGitFilesLine,
   renderEnvironmentLine,
   renderPromptCacheLine,
   renderUsageLine,
   renderMemoryLine,
   renderSessionTokensLine,
+  renderCompactionsLine,
+  renderSessionTimeLine,
 } from './lines/index.js';
 import { dim, RESET } from './colors.js';
 import { getTerminalWidth, UNKNOWN_TERMINAL_WIDTH } from '../utils/terminal.js';
+import { codePointCellWidth, isCjkAmbiguousWide } from './width.js';
 
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_PATTERN = /^(?:\x1b\[[0-9;]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
@@ -67,24 +72,7 @@ function segmentGraphemes(text: string): string[] {
   return Array.from(GRAPHEME_SEGMENTER.segment(text), segment => segment.segment);
 }
 
-function isWideCodePoint(codePoint: number): boolean {
-  return codePoint >= 0x1100 && (
-    codePoint <= 0x115F || // Hangul Jamo
-    codePoint === 0x2329 ||
-    codePoint === 0x232A ||
-    (codePoint >= 0x2E80 && codePoint <= 0xA4CF && codePoint !== 0x303F) ||
-    (codePoint >= 0xAC00 && codePoint <= 0xD7A3) ||
-    (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||
-    (codePoint >= 0xFE10 && codePoint <= 0xFE19) ||
-    (codePoint >= 0xFE30 && codePoint <= 0xFE6F) ||
-    (codePoint >= 0xFF00 && codePoint <= 0xFF60) ||
-    (codePoint >= 0xFFE0 && codePoint <= 0xFFE6) ||
-    (codePoint >= 0x1F300 && codePoint <= 0x1FAFF) ||
-    (codePoint >= 0x20000 && codePoint <= 0x3FFFD)
-  );
-}
-
-function graphemeWidth(grapheme: string): number {
+function graphemeWidth(grapheme: string, ambiguousWide: boolean): number {
   if (!grapheme || /^\p{Control}$/u.test(grapheme)) {
     return 0;
   }
@@ -102,8 +90,8 @@ function graphemeWidth(grapheme: string): number {
     }
     hasVisibleBase = true;
     const codePoint = char.codePointAt(0);
-    if (codePoint !== undefined && isWideCodePoint(codePoint)) {
-      width = Math.max(width, 2);
+    if (codePoint !== undefined) {
+      width = Math.max(width, codePointCellWidth(codePoint, ambiguousWide));
     } else {
       width = Math.max(width, 1);
     }
@@ -113,13 +101,14 @@ function graphemeWidth(grapheme: string): number {
 }
 
 function visualLength(str: string): number {
+  const ambiguousWide = isCjkAmbiguousWide();
   let width = 0;
   for (const token of splitAnsiTokens(str)) {
     if (token.type === 'ansi') {
       continue;
     }
     for (const grapheme of segmentGraphemes(token.value)) {
-      width += graphemeWidth(grapheme);
+      width += graphemeWidth(grapheme, ambiguousWide);
     }
   }
   return width;
@@ -130,6 +119,7 @@ function sliceVisible(str: string, maxVisible: number): string {
     return '';
   }
 
+  const ambiguousWide = isCjkAmbiguousWide();
   let result = '';
   let visibleWidth = 0;
   let done = false;
@@ -154,7 +144,7 @@ function sliceVisible(str: string, maxVisible: number): string {
 
     const plainChunk = str.slice(i, j);
     for (const grapheme of segmentGraphemes(plainChunk)) {
-      const graphemeCellWidth = graphemeWidth(grapheme);
+      const graphemeCellWidth = graphemeWidth(grapheme, ambiguousWide);
       if (visibleWidth + graphemeCellWidth > maxVisible) {
         done = true;
         break;
@@ -169,6 +159,26 @@ function sliceVisible(str: string, maxVisible: number): string {
   return result;
 }
 
+// OSC 8 close sequence (`\x1b]8;;\x1b\\`) terminates the current hyperlink.
+// If truncation cuts inside an open OSC 8 hyperlink, emitting only an SGR
+// reset (`\x1b[0m`) is not enough — the terminal keeps treating subsequent
+// output as part of the link and renders its underline across the rest of
+// the line. This helper returns the close sequence iff the last OSC 8 in
+// `str` opened a hyperlink (non-empty URL) without being followed by a
+// closer (empty URL).
+const OSC8_OPEN_OR_CLOSE = /\x1b\]8;;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const OSC8_CLOSE = '\x1b]8;;\x1b\\';
+
+function closeOpenHyperlink(str: string): string {
+  let last: RegExpExecArray | null = null;
+  let match: RegExpExecArray | null;
+  OSC8_OPEN_OR_CLOSE.lastIndex = 0;
+  while ((match = OSC8_OPEN_OR_CLOSE.exec(str)) !== null) {
+    last = match;
+  }
+  return last && last[1].length > 0 ? OSC8_CLOSE : '';
+}
+
 function truncateToWidth(str: string, maxWidth: number): string {
   if (maxWidth <= 0 || visualLength(str) <= maxWidth) {
     return str;
@@ -176,10 +186,13 @@ function truncateToWidth(str: string, maxWidth: number): string {
 
   const suffix = maxWidth >= 3 ? '...' : '.'.repeat(maxWidth);
   const keep = Math.max(0, maxWidth - suffix.length);
-  return `${sliceVisible(str, keep)}${suffix}${RESET}`;
+  const sliced = sliceVisible(str, keep);
+  // Close the hyperlink (if any) before the ellipsis so the suffix renders
+  // as plain text rather than as part of the truncated link.
+  return `${sliced}${closeOpenHyperlink(sliced)}${suffix}${RESET}`;
 }
 
-function splitLineBySeparators(line: string, sep: string = ' | '): { segments: string[]; separators: string[] } {
+function splitLineBySeparators(line: string): { segments: string[]; separators: string[] } {
   const segments: string[] = [];
   const separators: string[] = [];
   let currentStart = 0;
@@ -192,12 +205,16 @@ function splitLineBySeparators(line: string, sep: string = ' | '): { segments: s
       continue;
     }
 
-    const matched = line.startsWith(sep, i) ? sep : null;
+    const separator = line.startsWith(' | ', i)
+      ? ' | '
+      : (line.startsWith(' │ ', i) ? ' │ '
+      : (line.startsWith('｜', i) ? '｜'
+      : (line.startsWith('\u200b', i) ? '\u200b' : null)));
 
-    if (matched) {
+    if (separator) {
       segments.push(line.slice(currentStart, i));
-      separators.push(matched);
-      i += matched.length;
+      separators.push(separator);
+      i += separator.length;
       currentStart = i;
       continue;
     }
@@ -209,8 +226,8 @@ function splitLineBySeparators(line: string, sep: string = ' | '): { segments: s
   return { segments, separators };
 }
 
-function splitWrapParts(line: string, sep: string = ' | '): Array<{ separator: string; segment: string }> {
-  const { segments, separators } = splitLineBySeparators(line, sep);
+function splitWrapParts(line: string): Array<{ separator: string; segment: string }> {
+  const { segments, separators } = splitLineBySeparators(line);
   if (segments.length === 0) {
     return [];
   }
@@ -221,7 +238,7 @@ function splitWrapParts(line: string, sep: string = ' | '): Array<{ separator: s
   }];
   for (let segmentIndex = 1; segmentIndex < segments.length; segmentIndex += 1) {
     parts.push({
-      separator: separators[segmentIndex - 1] ?? sep,
+      separator: separators[segmentIndex - 1] ?? ' | ',
       segment: segments[segmentIndex],
     });
   }
@@ -252,12 +269,12 @@ function splitWrapParts(line: string, sep: string = ' | '): Array<{ separator: s
   return parts;
 }
 
-function wrapLineToWidth(line: string, maxWidth: number, sep: string = ' | '): string[] {
+function wrapLineToWidth(line: string, maxWidth: number): string[] {
   if (maxWidth <= 0 || visualLength(line) <= maxWidth) {
     return [line];
   }
 
-  const parts = splitWrapParts(line, sep);
+  const parts = splitWrapParts(line);
   if (parts.length <= 1) {
     return [truncateToWidth(line, maxWidth)];
   }
@@ -283,11 +300,17 @@ function wrapLineToWidth(line: string, maxWidth: number, sep: string = ' | '): s
   return wrapped;
 }
 
+// `length` is a target visual width in cells.
+// `─` (U+2500) is East Asian Ambiguous-width: rendered as 2 cells in CJK
+// terminals and 1 cell elsewhere. Repeating it `length` times in CJK mode
+// would double the visual width and force the terminal to wrap.
 function makeSeparator(length: number): string {
-  return dim('─'.repeat(Math.max(length, 1)));
+  const cellsPerDash = isCjkAmbiguousWide() ? 2 : 1;
+  const repeats = Math.max(1, Math.floor(length / cellsPerDash));
+  return dim('─'.repeat(repeats));
 }
 
-const ACTIVITY_ELEMENTS = new Set<HudElement>(['tools', 'agents', 'todos']);
+const ACTIVITY_ELEMENTS = new Set<HudElement>(['tools', 'skills', 'mcp', 'agents', 'todos']);
 
 function buildMergeGroupLookup(mergeGroups: HudElement[][]): Map<HudElement, Set<HudElement>> {
   const lookup = new Map<HudElement, Set<HudElement>>();
@@ -334,6 +357,20 @@ function collectActivityLines(ctx: RenderContext): string[] {
     }
   }
 
+  if (display?.showSkills === true) {
+    const skillsLine = renderSkillsLine(ctx);
+    if (skillsLine) {
+      activityLines.push(skillsLine);
+    }
+  }
+
+  if (display?.showMcp === true) {
+    const mcpLine = renderMcpLine(ctx);
+    if (mcpLine) {
+      activityLines.push(mcpLine);
+    }
+  }
+
   if (display?.showAgents !== false) {
     const agentsLine = renderAgentsLine(ctx);
     if (agentsLine) {
@@ -362,6 +399,8 @@ function renderElementLine(
   switch (element) {
     case 'project':
       return renderProjectLine(ctx);
+    case 'addedDirs':
+      return renderAddedDirsLine(ctx);
     case 'context':
       return renderIdentityLine(ctx, alignProgressLabels);
     case 'usage':
@@ -374,10 +413,16 @@ function renderElementLine(
       return renderEnvironmentLine(ctx);
     case 'tools':
       return display?.showTools === false ? null : renderToolsLine(ctx);
+    case 'skills':
+      return display?.showSkills === true ? renderSkillsLine(ctx) : null;
+    case 'mcp':
+      return display?.showMcp === true ? renderMcpLine(ctx) : null;
     case 'agents':
       return display?.showAgents === false ? null : renderAgentsLine(ctx);
     case 'todos':
       return display?.showTodos === false ? null : renderTodosLine(ctx);
+    case 'sessionTime':
+      return renderSessionTimeLine(ctx);
   }
 }
 
@@ -394,7 +439,6 @@ function renderCompact(ctx: RenderContext): string[] {
 
 function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null): Array<{ line: string; isActivity: boolean }> {
   const elementOrder = ctx.config?.elementOrder ?? DEFAULT_ELEMENT_ORDER;
-  const separator = ctx.config?.display?.separator ?? '｜';
   const mergeGroups = ctx.config?.display?.mergeGroups ?? DEFAULT_MERGE_GROUPS;
   const mergeGroupLookup = buildMergeGroupLookup(mergeGroups);
   const seen = new Set<HudElement>();
@@ -427,8 +471,8 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
           );
 
         if (renderedGroupLines.length > 1) {
-          const combinedLine = renderedGroupLines.map(({ line }) => line).join(separator);
-          const widthIsReal = terminalWidth && terminalWidth !== UNKNOWN_TERMINAL_WIDTH;
+          const combinedLine = renderedGroupLines.map(({ line }) => line).join(' | ');
+          const widthIsReal = terminalWidth !== UNKNOWN_TERMINAL_WIDTH;
           const canCombine = !widthIsReal || visualLength(combinedLine) <= terminalWidth;
 
           if (canCombine) {
@@ -483,15 +527,12 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
 
 export function render(ctx: RenderContext): void {
   const lineLayout = ctx.config?.lineLayout ?? 'expanded';
-  const separator = ctx.config?.display?.separator ?? '｜';
   const showSeparators = ctx.config?.showSeparators ?? false;
-  const detectedWidth =
-    getTerminalWidth({ preferEnv: true, fallback: UNKNOWN_TERMINAL_WIDTH }) ??
-    UNKNOWN_TERMINAL_WIDTH;
-  const terminalWidth =
-    detectedWidth === UNKNOWN_TERMINAL_WIDTH && ctx.config?.maxWidth
-      ? ctx.config.maxWidth
-      : detectedWidth;
+  const detectedWidth = getTerminalWidth({ preferEnv: true, fallback: UNKNOWN_TERMINAL_WIDTH });
+  const configuredMaxWidth = ctx.config?.maxWidth ?? UNKNOWN_TERMINAL_WIDTH;
+  const terminalWidth = ctx.config?.forceMaxWidth && configuredMaxWidth !== UNKNOWN_TERMINAL_WIDTH
+    ? configuredMaxWidth
+    : (detectedWidth ?? configuredMaxWidth ?? UNKNOWN_TERMINAL_WIDTH);
 
   let lines: string[];
 
@@ -506,6 +547,14 @@ export function render(ctx: RenderContext): void {
         lines.push(sessionTokensLine);
       }
     }
+
+    // Compaction count (opt-in, hidden until the first compaction)
+    const compactionsLine = renderCompactionsLine(ctx);
+    if (compactionsLine) {
+      lines.push(compactionsLine);
+    }
+
+    // Advisor is rendered inline on the project line; see renderProjectLine.
 
     if (showSeparators) {
       const firstActivityIndex = renderedLines.findIndex(({ isActivity }) => isActivity);
@@ -540,8 +589,8 @@ export function render(ctx: RenderContext): void {
   // Only wrap when terminal width is real (known). When width is the
   // UNKNOWN_TERMINAL_WIDTH fallback, wrapping would use an arbitrary value
   // and produce incorrect line breaks.
-  const wrapWidth = (terminalWidth && terminalWidth !== UNKNOWN_TERMINAL_WIDTH) ? terminalWidth : 0;
-  const visibleLines = physicalLines.flatMap(line => wrapLineToWidth(line, wrapWidth, separator));
+  const wrapWidth = terminalWidth !== UNKNOWN_TERMINAL_WIDTH ? (terminalWidth ?? 0) : 0;
+  const visibleLines = physicalLines.flatMap(line => wrapLineToWidth(line, wrapWidth));
 
   for (const line of visibleLines) {
     const outputLine = `${RESET}${line}`;

@@ -15,6 +15,7 @@ type ExecFileImpl = (
   options: {
     timeout: number;
     encoding: BufferEncoding;
+    windowsHide?: boolean;
   }
 ) => Promise<ExecFileResult>;
 
@@ -41,7 +42,7 @@ const defaultExecFile: ExecFileImpl = promisify(execFile) as ExecFileImpl;
 let execFileImpl: ExecFileImpl = defaultExecFile;
 let resolveClaudeBinaryImpl: () => ClaudeBinaryInfo | null = resolveClaudeBinaryFromPath;
 let platformImpl: () => NodeJS.Platform = () => process.platform;
-let comspecImpl: () => string | undefined = () => process.env.COMSPEC;
+let windowsCmdImpl: () => string = () => 'C:\\Windows\\System32\\cmd.exe';
 let cachedBinaryKey: string | undefined;
 let cachedVersion: string | undefined;
 let hasResolved = false;
@@ -199,13 +200,13 @@ export function _parseClaudeCodeVersion(output: string): string | undefined {
 export function _getClaudeVersionInvocation(
   binaryPath: string,
   platform: NodeJS.Platform = platformImpl(),
-  comspec: string | undefined = comspecImpl()
+  windowsCmd: string = windowsCmdImpl()
 ): ClaudeVersionInvocation {
   const ext = path.extname(binaryPath).toLowerCase();
   if (platform === 'win32' && (ext === '.cmd' || ext === '.bat')) {
     const command = [quoteForCmd(binaryPath), '--version'].join(' ');
     return {
-      file: comspec || 'cmd.exe',
+      file: windowsCmd,
       args: ['/d', '/s', '/c', `"${command}"`],
     };
   }
@@ -263,6 +264,7 @@ export async function getClaudeCodeVersion(): Promise<string | undefined> {
     const { stdout } = await execFileImpl(invocation.file, invocation.args, {
       timeout: 2000,
       encoding: 'utf8',
+      windowsHide: true,
     });
     cachedVersion = _parseClaudeCodeVersion(stdout);
   } catch {
@@ -297,8 +299,8 @@ export function _setResolveClaudeBinaryForTests(impl: (() => ClaudeBinaryInfo | 
 
 export function _setVersionInvocationEnvForTests(
   platformGetter: (() => NodeJS.Platform) | null,
-  comspecGetter: (() => string | undefined) | null
+  windowsCmdGetter: (() => string) | null
 ): void {
   platformImpl = platformGetter ?? (() => process.platform);
-  comspecImpl = comspecGetter ?? (() => process.env.COMSPEC);
+  windowsCmdImpl = windowsCmdGetter ?? (() => 'C:\\Windows\\System32\\cmd.exe');
 }

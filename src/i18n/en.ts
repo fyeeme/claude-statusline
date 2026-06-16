@@ -11,6 +11,11 @@ export const en: Messages = {
   "label.hooks": "hooks",
   "label.estimatedCost": "Est.",
   "label.cost": "Cost",
+  "label.tokens": "Tokens",
+  "label.sessionStarted": "Started",
+  "label.lastReply": "Last reply",
+  "label.advisor": "Advisor",
+  "label.compactions": "Compactions",
 
   // Status
   "status.limitReached": "Limit reached",
@@ -25,10 +30,13 @@ export const en: Messages = {
   "format.cache": "cache",
   "format.cacheHit": "hit",
   "format.out": "out",
+  "format.tok": "tok",
   "format.tokPerSec": "tok/s",
+  "format.justNow": "just now",
+  "format.ago": "ago",
 
   // Init
-  "init.initializing": "[claude-hud] Initializing...",
+  "init.initializing": "[claude-statusline] Initializing...",
   "init.macosNote":
-    "[claude-hud] Note: On macOS, you may need to restart Claude Code for the HUD to appear.",
+    "[claude-statusline] Note: On macOS, you may need to restart Claude Code for the HUD to appear.",
 };

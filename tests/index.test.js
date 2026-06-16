@@ -76,8 +76,8 @@ function makeCounts(overrides = {}) {
 }
 
 async function createTempConfigDir(config = {}) {
-  const dir = await mkdtemp(path.join(tmpdir(), "claude-hud-index-test-"));
-  const pluginDir = path.join(dir, "plugins", "claude-hud");
+  const dir = await mkdtemp(path.join(tmpdir(), "claude-statusline-index-test-"));
+  const pluginDir = path.join(dir, "plugins", "claude-statusline");
   await mkdir(pluginDir, { recursive: true });
   await writeFile(
     path.join(pluginDir, "config.json"),
@@ -130,7 +130,7 @@ test("main logs an error when dependencies throw", async () => {
     log: (...args) => logs.push(args.join(" ")),
   });
 
-  assert.ok(logs.some((line) => line.includes("[claude-hud] Error:")));
+  assert.ok(logs.some((line) => line.includes("[claude-statusline] Error:")));
 });
 
 test("main logs unknown error for non-Error throws", async () => {
@@ -177,7 +177,7 @@ test("index entrypoint runs when executed directly", async () => {
     await cleanup();
   }
 
-  assert.ok(logs.some((line) => line.includes("[claude-hud] Initializing...")));
+  assert.ok(logs.some((line) => line.includes("[claude-statusline] Initializing...")));
 });
 
 test("main executes the happy path", async () => {
@@ -202,6 +202,39 @@ test("main executes the happy path", async () => {
 
   assert.equal(renderedContext?.sessionDuration, "1m");
   assert.equal(renderedContext?.outputStyle, "tech-leader");
+});
+
+test("main passes compact transcript metadata to context fallback", async () => {
+  const stdin = makeStdin({ transcript_path: "/tmp/session.jsonl" });
+  const boundary = new Date("2026-04-24T03:00:00.000Z");
+  let fallbackArgs;
+
+  await main({
+    readStdin: async () => stdin,
+    parseTranscript: async (transcriptPath) => {
+      assert.equal(transcriptPath, "/tmp/session.jsonl");
+      return makeTranscript({
+        sessionName: "compact-session",
+        lastCompactBoundaryAt: boundary,
+        lastCompactPostTokens: 7679,
+      });
+    },
+    applyContextWindowFallback: (...args) => {
+      fallbackArgs = args;
+    },
+    countConfigs: async () => makeCounts(),
+    loadConfig: async () => makeConfig(),
+    getGitStatus: async () => null,
+    render: () => {},
+  });
+
+  assert.equal(fallbackArgs?.[0], stdin);
+  assert.deepEqual(fallbackArgs?.[1], {});
+  assert.equal(fallbackArgs?.[2], "compact-session");
+  assert.deepEqual(fallbackArgs?.[3], {
+    lastCompactBoundaryAt: boundary,
+    lastCompactPostTokens: 7679,
+  });
 });
 
 test("main includes git status in render context", async () => {
@@ -368,6 +401,53 @@ test("main prefers stdin usage over external usage fallback", async () => {
 
   assert.equal(externalCalls, 0);
   assert.deepEqual(renderedContext?.usageData, stdinUsage);
+});
+
+test("main appends external balance label to stdin usage when snapshot path is configured", async () => {
+  let renderedContext;
+  let externalCalls = 0;
+
+  await main({
+    readStdin: async () => makeStdin({
+      rate_limits: {
+        five_hour: { used_percentage: 21.9, resets_at: 1710000000 },
+        seven_day: { used_percentage: 55.2, resets_at: 1710600000 },
+      },
+    }),
+    parseTranscript: async () => makeTranscript(),
+    countConfigs: async () => makeCounts(),
+    loadConfig: async () => makeConfig({
+      display: { externalUsagePath: "/tmp/usage.json" },
+    }),
+    getGitStatus: async () => null,
+    getUsageFromExternalSnapshot: () => {
+      externalCalls += 1;
+      return {
+        fiveHour: 99,
+        sevenDay: 99,
+        fiveHourResetAt: null,
+        sevenDayResetAt: null,
+        balanceLabel: "$12.34 / $20.00",
+      };
+    },
+    render: (ctx) => {
+      renderedContext = ctx;
+    },
+  });
+
+  assert.equal(externalCalls, 1);
+  assert.deepEqual(renderedContext?.usageData, {
+    fiveHour: 22,
+    sevenDay: 55,
+    fiveHourStartAt: null,
+    fiveHourResetAt: new Date(1710000000 * 1000),
+    sevenDayStartAt: null,
+    sevenDayResetAt: new Date(1710600000 * 1000),
+    fiveHourWindowType: 'fixed',
+    sevenDayWindowType: 'fixed',
+    platform: 'anthropic',
+    balanceLabel: "$12.34 / $20.00",
+  });
 });
 
 test("main skips all usage loading when usage display is disabled", async () => {

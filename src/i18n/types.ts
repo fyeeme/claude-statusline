@@ -9,6 +9,11 @@ export type MessageKey =
   | "label.hooks"
   | "label.estimatedCost"
   | "label.cost"
+  | "label.tokens"
+  | "label.sessionStarted"
+  | "label.lastReply"
+  | "label.advisor"
+  | "label.compactions"
   // Status
   | "status.limitReached"
   | "status.allTodosComplete"
@@ -21,11 +26,14 @@ export type MessageKey =
   | "format.cache"
   | "format.cacheHit"
   | "format.out"
+  | "format.tok"
   | "format.tokPerSec"
+  | "format.justNow"
+  | "format.ago"
   // Init
   | "init.initializing"
   | "init.macosNote";
 
 export type Messages = Record<MessageKey, string>;
 
-export type Language = "en" | "zh";
+export type Language = "en" | "zh" | "zh-Hans";

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from '../dist/render/index.js';
+import { mergeConfig } from '../dist/config.js';
 import { setLanguage } from '../dist/i18n/index.js';
 
 function baseContext() {
@@ -38,6 +39,7 @@ function baseContext() {
         showSpeed: false,
         showTokenBreakdown: true,
         showUsage: true,
+        usageValue: 'percent',
         usageBarEnabled: false,
         showTools: true,
         showAgents: true,
@@ -213,6 +215,7 @@ test('render falls back to COLUMNS env when stdout.columns is unavailable', () =
   assert.ok(lines.every(line => displayWidth(line) <= 10), 'all lines should fit COLUMNS width');
 });
 
+
 test('render falls back to stderr.columns when stdout.columns and COLUMNS are unavailable', () => {
   const ctx = baseContext();
   const originalEnvColumns = process.env.COLUMNS;
@@ -237,6 +240,70 @@ test('render falls back to stderr.columns when stdout.columns and COLUMNS are un
   assert.ok(lines.every(line => displayWidth(line) <= 12), 'stderr width should be honored');
 });
 
+test('render does not use maxWidth over a detected 80-column width unless forceMaxWidth is enabled', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/project';
+  ctx.config.maxWidth = 300;
+  ctx.extraLabel = 'x'.repeat(120);
+
+  let lines = [];
+  withTerminal(80, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.ok(lines.length > 1, 'should still wrap when only detected width is 80 and forceMaxWidth is disabled');
+});
+
+test('render ignores forceMaxWidth when maxWidth is null', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/project';
+  ctx.config.forceMaxWidth = true;
+  ctx.extraLabel = 'x'.repeat(120);
+
+  let lines = [];
+  withTerminal(80, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.ok(lines.length > 1, 'should keep using detected width when forceMaxWidth is enabled without maxWidth');
+});
+
+test('render ignores forceMaxWidth when maxWidth is invalid in user config', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/project';
+  ctx.config = {
+    ...ctx.config,
+    ...mergeConfig({ maxWidth: 'wide', forceMaxWidth: true }),
+    display: ctx.config.display,
+    gitStatus: ctx.config.gitStatus,
+  };
+  ctx.extraLabel = 'x'.repeat(120);
+
+  let lines = [];
+  withTerminal(80, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.ok(lines.length > 1, 'should keep using detected width when invalid maxWidth is normalized away');
+});
+
+test('render uses maxWidth over a detected 80-column width when forceMaxWidth is enabled', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/project';
+  ctx.config.maxWidth = 300;
+  ctx.config.forceMaxWidth = true;
+  ctx.extraLabel = 'x'.repeat(120);
+
+  let lines = [];
+  withTerminal(80, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.equal(lines.length, 1, 'should keep the line intact when forceMaxWidth overrides a detected 80-column width');
+  assert.ok(lines[0].includes('x'.repeat(120)), 'should not truncate the long label when forceMaxWidth is enabled');
+  assert.ok(!lines[0].includes('...'), 'should avoid ellipsis truncation');
+});
+
 test('render ignores OSC 8 hyperlink sequences when measuring line width', () => {
   const ctx = baseContext();
   ctx.config.lineLayout = 'compact';
@@ -259,6 +326,7 @@ test('render ignores OSC 8 hyperlink sequences when measuring line width', () =>
   assert.ok(lines.every(line => displayWidth(line) <= 47), 'visible width should respect terminal width');
 });
 
+
 test('render ignores BEL-terminated OSC 8 hyperlink sequences when measuring line width', () => {
   const ctx = baseContext();
   ctx.config.lineLayout = 'compact';
@@ -279,6 +347,44 @@ test('render ignores BEL-terminated OSC 8 hyperlink sequences when measuring lin
   assert.ok(lines.some(line => line.includes('linked-label')), 'hyperlink label text should still render');
   assert.ok(lines.some(line => line.includes('1m')), 'later elements should not be wrapped off the line');
   assert.ok(lines.every(line => displayWidth(line) <= 47), 'visible width should respect terminal width');
+});
+
+test('render closes an OSC 8 hyperlink when truncation cuts inside it', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'compact';
+  ctx.stdin.context_window.current_usage.input_tokens = 0;
+  ctx.config.display.showContextBar = false;
+  ctx.config.display.showConfigCounts = false;
+  ctx.config.display.showUsage = false;
+  ctx.stdin.cwd = '/tmp/p';
+  // Label is wider than the terminal so truncation must cut inside it.
+  const linkLabel = 'a-very-long-hyperlink-label-that-must-be-truncated';
+  ctx.extraLabel = `\x1b]8;;file:///tmp/p/x\x1b\\${linkLabel}\x1b]8;;\x1b\\`;
+
+  const logs = [];
+  const originalLog = console.log;
+  console.log = line => logs.push(line);
+  try {
+    // Drive render directly so logs retain ANSI/OSC sequences (the
+    // shared captureRender helper strips them before returning).
+    withTerminal(20, () => render(ctx));
+  } finally {
+    console.log = originalLog;
+  }
+
+  const rawLines = logs;
+  const truncated = rawLines.find(line => line.includes('...'));
+  assert.ok(truncated, 'one line should have been truncated with an ellipsis');
+
+  const sliceBeforeEllipsis = truncated.slice(0, truncated.indexOf('...'));
+  assert.ok(
+    /\x1b\]8;;[^\x07\x1b]+(?:\x07|\x1b\\)/.test(sliceBeforeEllipsis),
+    'the truncated slice should have opened an OSC 8 hyperlink',
+  );
+  assert.ok(
+    /\x1b\]8;;(?:\x07|\x1b\\)/.test(sliceBeforeEllipsis),
+    'the truncated slice should close the hyperlink before the ellipsis so the underline does not bleed past',
+  );
 });
 
 test('render does not wrap when no real terminal width is available', () => {
@@ -377,6 +483,40 @@ test('render ignores config.maxWidth when terminal width is detected', () => {
   // Lines should use the detected 120 columns, not the 30 maxWidth
   assert.ok(lines.length > 0, 'should produce output');
   assert.ok(lines.every(line => displayWidth(line) <= 120), 'lines should fit detected width');
+});
+
+test('render treats an actual 40-column terminal as a real width', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/very-long-project-name-for-real-40-column-check';
+  ctx.extraLabel = 'extra-segment-for-40-column-check';
+
+  let lines = [];
+  withTerminal(40, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.ok(lines.length > 1, 'real 40-column terminals should still wrap');
+  assert.ok(lines.every(line => displayWidth(line) <= 40), 'all lines should respect the real 40-column width');
+});
+
+test('render does not treat a real 40-column terminal as unknown maxWidth fallback', () => {
+  const ctx = baseContext();
+  ctx.config.maxWidth = 30;
+  ctx.config.display.showModel = false;
+  ctx.config.display.showContextBar = false;
+  ctx.config.display.showProject = false;
+  ctx.config.display.showConfigCounts = false;
+  ctx.config.display.showDuration = false;
+  ctx.extraLabel = '12345678901234567890123456789012345';
+
+  let lines = [];
+  withTerminal(40, () => {
+    lines = captureRender(ctx);
+  });
+
+  assert.equal(lines.length, 1, 'real 40-column terminals should not fall back to maxWidth wrapping');
+  assert.ok(lines[0].includes('12345678901234567890123456789012345'), 'full extra label should remain visible at the real terminal width');
+  assert.ok(lines.every(line => displayWidth(line) <= 40), 'lines should still fit the real terminal width');
 });
 
 test('render does not strand a bare 5h continuation line in compact mode', () => {
@@ -538,4 +678,134 @@ test('render respects terminal width with Chinese labels enabled', () => {
   assert.ok(lines.some(line => line.includes('上下文')), 'should render the translated context label');
   assert.ok(lines.some(line => line.includes('用量')), 'should render the translated usage label');
   assert.ok(lines.every(line => displayWidth(line) <= 18), 'all lines should fit terminal width with CJK labels');
+});
+
+// CJK terminals render East Asian Ambiguous chars (█ ░ │ ◐ ✓ etc.) as 2 cells.
+// Without compensating width math, lines that look short to the code overflow
+// the visible terminal and get wrapped by the terminal itself.
+function ambiguousDisplayWidth(text) {
+  let width = 0;
+  for (const char of Array.from(text)) {
+    const cp = char.codePointAt(0);
+    if (cp === undefined) {
+      width += 1;
+      continue;
+    }
+    if (isWideCodePoint(cp)) {
+      width += 2;
+      continue;
+    }
+    const isAmbiguousWide =
+      (cp >= 0x2010 && cp <= 0x2027) ||
+      (cp >= 0x2030 && cp <= 0x205E) ||
+      (cp >= 0x2190 && cp <= 0x21FF) ||
+      (cp >= 0x2200 && cp <= 0x22FF) ||
+      (cp >= 0x2300 && cp <= 0x23FF) ||
+      (cp >= 0x2460 && cp <= 0x24FF) ||
+      (cp >= 0x2500 && cp <= 0x259F) ||
+      (cp >= 0x25A0 && cp <= 0x25FF) ||
+      (cp >= 0x2600 && cp <= 0x26FF) ||
+      (cp >= 0x2700 && cp <= 0x27BF);
+    width += isAmbiguousWide ? 2 : 1;
+  }
+  return width;
+}
+
+test('render wraps progress bars when CJK ambiguous-width chars overflow the terminal', () => {
+  const ctx = baseContext();
+  ctx.config.language = 'zh';
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.display.showUsage = true;
+  ctx.config.display.usageBarEnabled = true;
+  ctx.usageData = {
+    fiveHour: 49,
+    sevenDay: null,
+    fiveHourResetAt: new Date(Date.now() + 3 * 3600 * 1000 + 12 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+
+  let cjkLines = [];
+  setLanguage('zh');
+  try {
+    withTerminal(40, () => {
+      cjkLines = captureRender(ctx);
+    });
+  } finally {
+    setLanguage('en');
+  }
+
+  assert.ok(
+    cjkLines.every(line => ambiguousDisplayWidth(line) <= 40),
+    'no line should overflow 40 cells when ambiguous-width chars count as 2',
+  );
+
+  let enLines = [];
+  withTerminal(40, () => {
+    enLines = captureRender(ctx);
+  });
+  assert.ok(enLines.length > 0, 'non-CJK mode should still produce output');
+});
+
+test('separator width accounts for CJK ambiguous-wide dashes so the terminal does not wrap it', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.showSeparators = true;
+  ctx.config.display.showContextBar = true;
+  ctx.config.display.showUsage = true;
+  ctx.config.display.usageBarEnabled = true;
+  ctx.usageData = {
+    fiveHour: 49,
+    sevenDay: null,
+    fiveHourResetAt: new Date(Date.now() + 3 * 3600 * 1000),
+    sevenDayResetAt: null,
+  };
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0), duration: 0 },
+  ];
+
+  let cjkLines = [];
+  setLanguage('zh');
+  try {
+    withTerminal(120, () => {
+      cjkLines = captureRender(ctx);
+    });
+  } finally {
+    setLanguage('en');
+  }
+
+  const separatorLines = cjkLines.filter(line => /^[\s─]+$/.test(line));
+  assert.equal(separatorLines.length, 1, 'separator should render exactly once and not be split into multiple lines');
+  assert.ok(
+    ambiguousDisplayWidth(separatorLines[0]) <= 120,
+    `separator visual width must fit terminal in CJK mode (got ${ambiguousDisplayWidth(separatorLines[0])} cells, terminal=120)`,
+  );
+
+  for (const line of cjkLines) {
+    assert.ok(
+      ambiguousDisplayWidth(line) <= 120,
+      `line "${line}" exceeds 120 cells in CJK mode (got ${ambiguousDisplayWidth(line)})`,
+    );
+  }
+});
+
+
+test('width math counts ambiguous chars as 2 cells only in CJK mode', async () => {
+  const { codePointCellWidth, isAmbiguousWideCodePoint, isCjkAmbiguousWide } =
+    await import('../dist/render/width.js');
+
+  assert.equal(isAmbiguousWideCodePoint(0x2588), true, '█ U+2588 is ambiguous');
+  assert.equal(isAmbiguousWideCodePoint(0x2502), true, '│ U+2502 is ambiguous');
+  assert.equal(isAmbiguousWideCodePoint(0x0041), false, 'ASCII A is not ambiguous');
+
+  setLanguage('zh');
+  try {
+    assert.equal(isCjkAmbiguousWide(), true);
+    assert.equal(codePointCellWidth(0x2588, isCjkAmbiguousWide()), 2);
+    assert.equal(codePointCellWidth(0x0041, isCjkAmbiguousWide()), 1);
+  } finally {
+    setLanguage('en');
+  }
+
+  assert.equal(isCjkAmbiguousWide(), false);
+  assert.equal(codePointCellWidth(0x2588, isCjkAmbiguousWide()), 1);
 });

@@ -7,11 +7,11 @@ const MAX_BUFFER = 10 * 1024; // 10KB - plenty for a label
 const MAX_LABEL_LENGTH = 50;
 const TIMEOUT_MS = 3000;
 
-const isDebug = process.env.DEBUG?.includes('claude-hud') ?? false;
+const isDebug = process.env.DEBUG?.includes('claude-statusline') ?? false;
 
 function debug(message: string): void {
   if (isDebug) {
-    console.error(`[claude-hud:extra-cmd] ${message}`);
+    console.error(`[claude-statusline:extra-cmd] ${message}`);
   }
 }
 
@@ -81,6 +81,7 @@ export async function runExtraCmd(cmd: string, timeout: number = TIMEOUT_MS): Pr
     const { stdout } = await execAsync(cmd, {
       timeout,
       maxBuffer: MAX_BUFFER,
+      windowsHide: true,
     });
     const data: unknown = JSON.parse(stdout.trim());
     if (
