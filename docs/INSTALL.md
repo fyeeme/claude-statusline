@@ -1,222 +1,222 @@
-# Claude Statusline (GLM Fork) 安装指南
+# 安装指南
 
-> 适用于未安装原版 claude-statusline 的用户，直接安装我们的 fork 版本。
+> 通过 Claude Code 插件市场（marketplace）安装 claude-statusline 的推荐流程。
+> GLM / DeepSeek 用户也能用同一套流程，安装后再配置 provider 即可。
 
 ## 前置要求
 
 - Claude Code CLI
+- Node.js 18+（Windows 必须；macOS/Linux 也可用 [Bun](https://bun.sh) 加速）
 - Git
-- Node.js 18+ 或 Bun
-- GLM 平台账号（Z.ai / bigmodel.cn）
+- （可选）GLM 或 DeepSeek 账号——仅当需要显示第三方 provider 用量时
 
-## 安装步骤
+---
 
-### 1. 克隆 fork 仓库
+## 方式 A：通过插件市场安装（推荐）
+
+在 Claude Code 会话内依次执行。这是官方推荐的标准流程，会自动克隆仓库到插件缓存目录、注册命令、并让你用 `/claude-statusline:setup` 一键写入 `statusLine` 配置。
+
+### 第 1 步：添加市场源
+
+```
+/plugin marketplace add fyeeme/claude-statusline
+```
+
+### 第 2 步：安装插件
+
+<details>
+<summary><strong>⚠️ Linux 用户：先看这里</strong></summary>
+
+Linux 上 `/tmp` 经常是独立的 tmpfs 文件系统，会导致安装失败：
+
+```
+EXDEV: cross-device link not permitted
+```
+
+**解决**：安装前设置 `TMPDIR` 指向与 home 同一文件系统的目录：
 
 ```bash
-git clone https://github.com/fyeeme/claude-statusline.git ~/.claude/plugins/cache/claude-statusline
-cd ~/.claude/plugins/cache/claude-statusline
+mkdir -p ~/.cache/tmp && TMPDIR=~/.cache/tmp claude
 ```
 
-### 2. 构建项目
+然后在该会话中执行下面的安装命令。这是 [Claude Code 平台限制](https://github.com/anthropics/claude-code/issues/14799)。
 
-```bash
-npm install
-npm run build
+</details>
+
+```
+/plugin install claude-statusline
 ```
 
-### 3. 配置 Claude Code
+安装后重载插件：
 
-编辑 `~/.claude/settings.json`，添加以下内容：
-
-#### 3a. 注册插件市场源
-
-在 `extraKnownMarketplaces` 中添加：
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "claude-statusline": {
-      "source": {
-        "source": "github",
-        "repo": "fyeeme/claude-statusline"
-      }
-    }
-  }
-}
+```
+/reload-plugins
 ```
 
-#### 3b. 启用插件
+### 第 3 步：配置 statusLine
 
-在 `enabledPlugins` 中添加：
-
-```json
-{
-  "enabledPlugins": {
-    "claude-statusline@claude-statusline": true
-  }
-}
+```
+/claude-statusline:setup
 ```
 
-#### 3c. 配置 statusLine 命令
+`setup` 命令会自动检测运行时（bun/node）、找到已安装的最新版本、并把 `statusLine` 命令写入 `~/.claude/settings.json`。命令本身包含终端宽度探测（通过 `COLUMNS` / `stty size`），所以**通常无需手动设置 `terminalWidth`**。
 
-在 `settings.json` 中添加 `statusLine` 配置。
+<details>
+<summary><strong>Windows 用户：如果提示找不到 JavaScript 运行时</strong></summary>
 
-**方案 A：使用 bun 直接运行 TypeScript（推荐）**
+Windows 仅支持 Node.js（不支持 Bun）。若 setup 提示找不到运行时，先装 Node.js LTS：
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "bash -c 'glm_env=$(mktemp); printf \"%s\\n\" \"ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}\" \"ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}\" > \"$glm_env\"; plugin_dir=$(ls -d \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/plugins/cache/claude-statusline/*/ 2>/dev/null | sort -t/ -k1,1 | tail -1); if [ -z \"$plugin_dir\" ]; then plugin_dir=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-statusline/\"; fi; exec \"$(which bun || which node)\" --env-file \"$glm_env\" \"${plugin_dir}src/index.ts\"; rm -f \"$glm_env\"'"
-  }
-}
+```powershell
+winget install OpenJS.NodeJS.LTS
 ```
 
-> **注意**：statusLine 命令通过 `--env-file "$glm_env"` 将 GLM 认证变量传递给 bun，确保 HUD 能获取用量数据。
+重启终端后再运行 `/claude-statusline:setup`。
 
-**方案 B：使用构建后的 dist 文件（不需要 bun）**
+</details>
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "bash -c 'glm_env=$(mktemp); printf \"%s\\n\" \"ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}\" \"ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}\" > \"$glm_env\"; plugin_dir=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-statusline/\"; exec node --env-file \"$glm_env\" \"${plugin_dir}dist/index.js\"; rm -f \"$glm_env\"'"
-  }
-}
-```
+### 第 4 步：重启 Claude Code
 
-#### 3d. 配置 GLM 环境变量
+完全退出 Claude Code 后重新启动，HUD 即会出现在输入框下方。
 
-在 `settings.json` 的 `env` 中添加（示例为 bigmodel.cn）：
+> **提示**：`setup` 写入的 `statusLine` 命令是「动态版本查找」格式——插件更新后自动指向最新版本，无需重新跑 setup。
+
+---
+
+## 方式 B：配置第三方 Provider（GLM / DeepSeek）
+
+本 fork 的核心价值是原生支持 GLM 和 DeepSeek 用量追踪。Provider 通过 `ANTHROPIC_BASE_URL` **自动检测**，无需额外开关。
+
+### 通过 Claude Code 的 `env` 配置（推荐）
+
+编辑 `~/.claude/settings.json`，把 provider 凭据放进 `env` 段：
 
 ```json
 {
   "env": {
     "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
-    "ANTHROPIC_AUTH_TOKEN": "<your-glm-api-token>"
+    "ANTHROPIC_AUTH_TOKEN": "<your-glm-or-deepseek-key>"
   }
 }
 ```
 
-> **注意：** `ANTHROPIC_AUTH_TOKEN` 是 GLM 的 API Key，不是 Anthropic 的。
+常见 provider 的 `ANTHROPIC_BASE_URL`：
 
-### 4. 重启 Claude Code
+| Provider | BASE_URL |
+|----------|----------|
+| GLM（bigmodel.cn） | `https://open.bigmodel.cn/api/anthropic` |
+| GLM（Z.ai） | `https://api.z.ai/api/anthropic` |
+| DeepSeek | `https://api.deepseek.com/anthropic` |
+| Anthropic（默认） | 不设置 |
 
-完全退出 Claude Code 后重新启动，statusLine 即会生效。
+> **注意**：`ANTHROPIC_AUTH_TOKEN` 是 provider 自己的 API Key，不是 Anthropic 的。
+
+### 通过 shell 环境变量（替代）
+
+也可以在启动 Claude Code 前导出：
+
+```bash
+export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
+export ANTHROPIC_AUTH_TOKEN="your-glm-key"
+claude
+```
+
+---
+
+## 可选：手动设置终端宽度（`terminalWidth`）
+
+statusline 子进程无法读取终端真实宽度（`stdout.columns` 和 `COLUMNS` 在子进程中均不可用）。`/claude-statusline:setup` 生成的命令已内置宽度探测，**大多数情况无需手动设置**。
+
+仅当出现以下情况时，手动设置 `terminalWidth`：
+
+- HUD 内容被截断或换行异常
+- 你用的是自定义/非标准 statusLine 命令（未跑 setup）
+
+编辑 `~/.claude/plugins/claude-statusline/config.json`：
+
+```json
+{
+  "terminalWidth": 100
+}
+```
+
+设为你的终端实际列数（如 `80`、`100`、`120`）。设为 `null` 或不设则回退到 setup 命令的探测结果。
+
+---
+
+## 更新已安装的插件
+
+### 通过 Claude Code 更新（推荐）
+
+插件市场安装后，更新自动进行——`setup` 写入的命令会动态查找最新版本。拉取新版本：
+
+```
+/plugin marketplace update claude-statusline
+```
+
+然后重载：
+
+```
+/reload-plugins
+```
+
+### 开发者：从 fork 源码同步更新
+
+如果你在本地 fork 仓库开发，并想把改动同步到已安装的插件缓存目录：
+
+```bash
+# 1. 在 fork 目录构建
+cd /path/to/your/claude-statusline
+npm run build
+
+# 2. 用 deploy.sh 同步到插件缓存（自动找最新版本目录）
+bash deploy.sh
+
+# 3. 重启 Claude Code
+```
+
+`deploy.sh` 会编译并把 `src/` 和 `dist/` 同步到 `~/.claude/plugins/cache/<marketplace>/claude-statusline/<version>/`。它同时兼容 `claude-statusline` 和旧名 `claude-hud` 的安装路径。
+
+---
 
 ## 验证安装
 
-启动 Claude Code 后，在终端顶部应看到类似如下的 HUD 显示：
+启动 Claude Code 后，输入框下方应出现类似：
 
 ```
-[GLM-5.1] | project-name git:(branch*)
-Context ██░░░░░░ 29% | Usage ██░░░░░░ 24% (5h) | 7d █░░░░░░░ 15% (347M / 7d)
-2 CLAUDE.md | 6 MCPs | 3 hooks
+my-project (main*) │ [Opus]
+Context 45% (90k/200k) │ Usage 25% (1h 30m / 5h)
 ```
 
-## 覆盖更新（已有安装）
+GLM/DeepSeek 用户会额外看到用量窗口与账户余额。
 
-当 fork 仓库有新改动，需要更新已安装的 HUD 时：
-
-### 方式一：直接在 fork 目录更新（推荐）
-
-fork 仓库直接放在插件缓存目录，编译后立即生效：
-
-```bash
-# 1. 进入 fork 仓库目录
-cd ~/.claude/plugins/cache/claude-statusline
-
-# 2. 拉取最新代码
-git pull
-
-# 3. 重新构建
-npm run build
-
-# 4. 重启 Claude Code 即可生效
-```
-
-### 方式二：从外部仓库同步
-
-如果 fork 仓库在其他位置开发，需要将编译产物同步到插件缓存目录：
-
-```bash
-# 1. 在开发目录构建
-cd /path/to/your/claude-statusline
-npm run build
-
-# 2. 同步源码和编译产物到插件缓存
-#    注意：src/ 和 dist/ 都需要同步，因为 statusLine 使用 bun 运行 src/
-rsync -av --delete \
-  src/ dist/ package.json \
-  ~/.claude/plugins/cache/claude-statusline/
-
-# 3. 重启 Claude Code 即可生效
-```
-
-### 方式三：全量覆盖（适合大改动）
-
-```bash
-# 1. 在开发目录构建
-cd /path/to/your/claude-statusline
-npm run build
-
-# 2. 删除旧的 fork 目录并重新克隆/复制
-rm -rf ~/.claude/plugins/cache/claude-statusline
-cp -r /path/to/your/claude-statusline ~/.claude/plugins/cache/claude-statusline
-
-# 3. 安装依赖（如果 node_modules 不在复制范围内）
-cd ~/.claude/plugins/cache/claude-statusline
-npm install --production
-
-# 4. 重启 Claude Code
-```
-
-> **提示**：如果 HUD 不更新，检查 `settings.json` 中 `statusLine` 命令指向的路径是否正确（`claude-statusline` vs `claude-statusline/claude-statusline/<version>`）。
-
-## GLM 用量显示说明
-
-| 显示项 | 含义 |
-|--------|------|
-| `5h` | 滚动 5 小时窗口用量百分比 |
-| `7d` | 估算 7 天用量百分比 |
-| `347M / 7d` | 7 天累计使用 token 数（向下取整） |
+---
 
 ## 故障排除
 
 ### HUD 不显示
 
-1. 检查 `statusLine` 命令中的路径是否正确
-2. 确认 bun 或 node 可在 bash 环境中访问
-3. 手动测试：`echo '{}' | bun <plugin_dir>src/index.ts`
+1. 确认 `/claude-statusline:setup` 已运行（检查 `~/.claude/settings.json` 是否有 `statusLine` 配置）
+2. 完全退出并重启 Claude Code（不是新建会话）
+3. 手动测试命令：`echo '{}' | node <plugin_dir>/dist/index.js`
 
-### 用量不显示
+### 内容被截断 / 换行异常
 
-1. 确认 `ANTHROPIC_BASE_URL` 指向 GLM 域名（`open.bigmodel.cn` 或 `api.z.ai`）
+设置 `config.json` 的 `terminalWidth` 为终端实际宽度（见上文「手动设置终端宽度」）。
+
+### 用量（5h / 7d / 余额）不显示
+
+1. 确认 `ANTHROPIC_BASE_URL` 指向 GLM 或 DeepSeek 域名
 2. 确认 `ANTHROPIC_AUTH_TOKEN` 有效
-3. 检查 statusLine 命令中是否包含 `--env-file "$glm_env"` 传递认证变量
-4. 清除缓存：`rm -f ~/.claude/plugins/claude-statusline/.usage-cache.json`
+3. 清缓存重试：`rm -f ~/.claude/plugins/claude-statusline/.usage-cache.json`
+
+### Linux 安装报 `EXDEV` 错误
+
+见「第 2 步」的 Linux 折叠说明——设置 `TMPDIR=~/.cache/tmp` 后重装。
 
 ### 插件未加载
 
-确认 `settings.json` 中同时包含：
-- `enabledPlugins` 中的 `claude-statusline@claude-statusline`
-- `extraKnownMarketplaces` 中的市场源配置
+确认 `~/.claude/settings.json` 同时包含：
+- `enabledPlugins` 中的 `"claude-statusline@claude-statusline": true`
+- `extraKnownMarketplaces` 中的 `claude-statusline` 市场源
 
-### 更新后无变化
-
-1. 确认 `npm run build` 成功（无编译错误）
-2. 确认 `src/` 目录已同步到插件缓存目录
-3. 完全退出并重启 Claude Code（不是新建会话）
-
-## 相比原版的改动
-
-- 自动检测 GLM 平台（通过 `ANTHROPIC_BASE_URL`）
-- 从 GLM API 获取 5h/7d 用量数据
-- 支持 bigmodel.cn 和 z.ai 两种 API 响应格式
-- 7 天用量估算：`7d_pct = (7d_tokens * 5h_pct) / (24h_tokens * 7)`
-- 文件缓存 + TTL 机制（5 分钟缓存，45-75s 错误重试）
-- 统一使用英文 `|` 分隔符（单空格），降低宽度占用
-- Bar 宽度 0.8 缩放，保持上下文和用量条视觉一致且防止换行
-- token 数量向下取整（如 347.8M → 347M）
-- statusLine 通过 `--env-file` 传递 GLM 认证变量，避免环境变量丢失
+（正常通过 `/plugin install` 安装会自动写入这两项。）

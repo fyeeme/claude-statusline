@@ -124,7 +124,7 @@ claude
 
 ### Default (2 lines)
 ```
-[Opus] │ my-project git:(main*)
+my-project (main*) │ [Opus]
 Context █████░░░░░ 45% │ Usage ██░░░░░░░░ 25% (1h 30m / 5h)
 ```
 - **Line 1** — Model, provider label when positively identified (for example `Bedrock`, `Vertex`), project path, git branch
@@ -253,11 +253,11 @@ Chinese HUD labels are available as an explicit opt-in. English stays the defaul
 | `colors.warning` | color value | `yellow` | Warning color for context thresholds and usage warning text |
 | `colors.usageWarning` | color value | `brightMagenta` | Warning color for usage bars and percentages near their threshold |
 | `colors.critical` | color value | `red` | Critical color for limit-reached states and critical thresholds |
-| `colors.model` | color value | `cyan` | Color for the model badge such as `[Opus]` |
-| `colors.project` | color value | `yellow` | Color for the project path |
-| `colors.git` | color value | `magenta` | Color for git wrapper text such as `git:(` and `)` |
-| `colors.gitBranch` | color value | `cyan` | Color for the git branch and branch status text |
-| `colors.label` | color value | `dim` | Color for labels and secondary metadata such as `Context`, `Usage`, counts, and progress text |
+| `colors.model` | color value | `none` | Color for the model badge such as `[Opus]` |
+| `colors.project` | color value | `none` | Color for the project path |
+| `colors.git` | color value | `none` | Color for git wrapper text such as `(` and `)` |
+| `colors.gitBranch` | color value | `none` | Color for the git branch and branch status text |
+| `colors.label` | color value | `none` | Color for labels and secondary metadata such as `Context`, `Usage`, counts, and progress text |
 | `colors.custom` | color value | `208` | Color for the optional custom line |
 | `colors.barFilled` | string | `█` | Character used for the filled portion of progress bars |
 | `colors.barEmpty` | string | `░` | Character used for the empty portion of progress bars |
@@ -376,17 +376,17 @@ Example fallback snapshot:
 
 ### Display Examples
 
-**1 level (default):** `[Opus] │ my-project git:(main)`
+**1 level (default):** `my-project (main) │ [Opus]`
 
-**2 levels:** `[Opus] │ apps/my-project git:(main)`
+**2 levels:** `apps/my-project (main) │ [Opus]`
 
-**3 levels:** `[Opus] │ dev/apps/my-project git:(main)`
+**3 levels:** `dev/apps/my-project (main) │ [Opus]`
 
-**With dirty indicator:** `[Opus] │ my-project git:(main*)`
+**With dirty indicator:** `my-project (main*) │ [Opus]`
 
-**With ahead/behind:** `[Opus] │ my-project git:(main ↑2 ↓1)`
+**With ahead/behind:** `my-project (main ↑2 ↓1) │ [Opus]`
 
-**With file stats:** `[Opus] │ my-project git:(main* !3 +1 ?2)`
+**With file stats:** `my-project (main* !3 +1 ?2) │ [Opus]`
 - `!` = modified files, `+` = added/staged, `✘` = deleted, `?` = untracked
 - Counts of 0 are omitted for cleaner display
 
