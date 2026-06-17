@@ -3321,6 +3321,26 @@ describe('config.terminalWidth drives width-adaptive rendering', () => {
       assert.ok(!/\[Opus\[$/.test(line), `badge truncated: ${line}`);
     }
   });
+
+  test('detected terminal width takes priority over config.terminalWidth (setup command sets the real width)', () => {
+    // The /claude-statusline:setup command exports COLUMNS to the real
+    // terminal width, so the detected width is authoritative. A stale or
+    // placeholder config.terminalWidth must NOT override it — otherwise the
+    // badge would be padded to the config width, not the real terminal edge.
+    const ctx = baseContext();
+    ctx.stdin.cwd = '/tmp/my-project';
+    ctx.gitStatus = { branch: 'main', isDirty: false, ahead: 0, behind: 0 };
+    // Stale config width that is much smaller than the real terminal.
+    ctx.config = mergeConfig({ terminalWidth: 60 });
+    const lines = withTerminal(196, () => captureRenderLines(ctx));
+    const first = lines[0];
+    // The badge must sit flush against the detected width (196), not the
+    // config width (60). i.e. padding fills ~196 cells, not 60.
+    assert.ok(first.length >= 190,
+      `badge should align to detected width 196, not config 60: got len ${first.length} [${first}]`);
+    assert.ok(first.endsWith('[Opus]'),
+      `badge should be flush right at detected width: ${first}`);
+  });
 });
 
 

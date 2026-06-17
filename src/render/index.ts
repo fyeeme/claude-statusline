@@ -446,15 +446,22 @@ export function render(ctx: RenderContext): void {
   const showSeparators = ctx.config?.showSeparators ?? false;
   const detectedWidth = getTerminalWidth({ preferEnv: true, fallback: UNKNOWN_TERMINAL_WIDTH });
   const configuredMaxWidth = ctx.config?.maxWidth ?? UNKNOWN_TERMINAL_WIDTH;
-  // Priority: explicit config.terminalWidth (authoritative — the subprocess
-  // cannot detect the real terminal size) > detected width > configured
-  // maxWidth fallback. forceMaxWidth still overrides maxWidth as before.
   const configuredTerminalWidth = ctx.config?.terminalWidth ?? UNKNOWN_TERMINAL_WIDTH;
+  // Width priority:
+  //   1. forceMaxWidth + maxWidth (explicit hard override, as before)
+  //   2. detected width (COLUMNS env / stdout.columns). The setup command
+  //      exports the REAL terminal width to COLUMNS, so when present this is
+  //      authoritative and must beat any stale config.terminalWidth.
+  //   3. config.terminalWidth (fallback for the bare-command case where the
+  //      subprocess cannot detect width at all).
+  //   4. configured maxWidth (legacy fallback).
   const terminalWidth = ctx.config?.forceMaxWidth && configuredMaxWidth !== UNKNOWN_TERMINAL_WIDTH
     ? configuredMaxWidth
-    : (configuredTerminalWidth !== UNKNOWN_TERMINAL_WIDTH
-      ? configuredTerminalWidth
-      : (detectedWidth ?? configuredMaxWidth ?? UNKNOWN_TERMINAL_WIDTH));
+    : (detectedWidth !== UNKNOWN_TERMINAL_WIDTH
+      ? detectedWidth
+      : (configuredTerminalWidth !== UNKNOWN_TERMINAL_WIDTH
+        ? configuredTerminalWidth
+        : (configuredMaxWidth ?? UNKNOWN_TERMINAL_WIDTH)));
 
   let lines: string[];
 
