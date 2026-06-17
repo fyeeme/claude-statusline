@@ -7,7 +7,7 @@ Fork of [claude-hud](https://github.com/jarrodwatts/claude-hud), extended with n
 [![License](https://img.shields.io/github/license/fyeeme/claude-statusline?v=2)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/fyeeme/claude-statusline)](https://github.com/fyeeme/claude-statusline/stargazers)
 
-![Claude Statusline in action](claude-hud-preview-5-2.png)
+![Claude Statusline in action](claude-statusline-preview-5-2.png)
 
 > 🌐 English | [中文文档](README.zh.md)
 
