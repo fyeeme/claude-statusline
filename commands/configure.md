@@ -17,7 +17,7 @@ enabled — toggle them by editing `config.json` directly if needed:
 - Model name `[Opus]`
 - Context bar `████░░░░░░ 45%`
 
-Advanced settings such as `colors.*`, `pathLevels`, `maxWidth`, `forceMaxWidth`,
+Advanced settings such as `colors.*`, `pathLevels`, `terminalWidth`, `maxWidth`, `forceMaxWidth`,
 `elementOrder`, `display.mergeGroups`, `display.timeFormat`, `display.contextValue`,
 `display.modelFormat`, `display.modelOverride`, `display.autocompactBuffer`,
 `display.autoCompactWindow`, `display.promptCacheTtlSeconds`,
@@ -79,7 +79,7 @@ Save as `language: "en"` or `language: "zh-Hans"`.
   - "Todo progress" - ▸ Fix bug (2/5 tasks)
   - "Project name" - my-project path display
   - "Added directories" - +repo +shared workspace directories from /add-dir
-  - "Git status" - git:(main*) branch indicator
+  - "Git status" - (main*) branch indicator
   - "Config counts" - 2 CLAUDE.md | 4 rules
   - "Token breakdown" - (in: 45k, cache: 12k)
   - "Output speed" - out: 42.1 tok/s
@@ -134,7 +134,7 @@ If user chooses "Enter custom text", use AskUserQuestion to get their text. Save
   - "Todo progress" - ▸ Fix bug (2/5 tasks)
   - "Project name" - my-project path display
   - "Added directories" - +repo +shared workspace directories from /add-dir
-  - "Git status" - git:(main*) branch indicator
+  - "Git status" - (main*) branch indicator
   - "Session name" - fix-auth-bug (session slug or custom title)
   - "Session tokens" - Tokens 12.8M (in: 7k, out: 28k, cache: 12.8M)
   - "Reasoning level" - ◑ high (low/medium/high/xhigh/max effort)
@@ -186,10 +186,10 @@ Info items (Counts, Tokens, Usage, Speed, Duration) can be turned off via "Reset
 - question: "How much git info to show?"
 - multiSelect: false
 - options:
-  - "Branch only" - git:(main)
-  - "Branch + dirty" - git:(main*) shows uncommitted changes
-  - "Full details" - git:(main* ↑2 ↓1) includes ahead/behind
-  - "File stats" - git:(main* !2 +1 ?3) Starship-compatible format
+  - "Branch only" - (main)
+  - "Branch + dirty" - (main*) shows uncommitted changes
+  - "Full details" - (main* ↑2 ↓1) includes ahead/behind
+  - "File stats" - (main* !2 +1 ?3) Starship-compatible format
 
 **Skip Q3 if Git is OFF** - proceed to Q4.
 
@@ -379,7 +379,7 @@ Changes:
 
 2. **Preview of HUD (Expanded layout):**
 ```
-[Opus | Pro] │ my-project git:(main*)
+my-project (main*) │ [Opus | Pro]
 Context ████░░░░░ 45% │ Usage ██░░░░░░░░ 25% (1h 30m / 5h)
 ◐ Edit: file.ts | ✓ Read ×3
 ▸ Fix auth bug (2/5)
@@ -387,7 +387,7 @@ Context ████░░░░░ 45% │ Usage ██░░░░░░░░
 
 **Preview of HUD (Compact layout):**
 ```
-[Opus | Pro] ████░░░░░ 45% | my-project git:(main*) | 5h: 25% | ⏱️ 5m
+[Opus | Pro] ████░░░░░ 45% | my-project (main*) | 5h: 25% | ⏱️ 5m
 ◐ Edit: file.ts | ✓ Read ×3
 ▸ Fix auth bug (2/5)
 ```

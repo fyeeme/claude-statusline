@@ -39,18 +39,18 @@ Record:
 
 Use AskUserQuestion. **Ask all questions in one batch.**
 
-### Q1: Terminal Width Fallback (PRIMARY)
+### Q1: Terminal Width (PRIMARY)
 
-The HUD uses a fallback of **40 characters** when auto-detection fails. This causes aggressive truncation.
+The statusline subprocess cannot detect the real terminal size (`stdout.columns`/`COLUMNS` are unavailable), so `config.terminalWidth` is the authoritative width source. When unset, the HUD falls back to a narrow width and truncates aggressively.
 
 - header: "Width"
-- question: "Set the terminal width fallback (used when auto-detection fails). Your terminal is currently: [show tput cols result]."
+- question: "Set the terminal width. Your terminal is currently: [show tput cols result]."
 - multiSelect: false
 - options with previews:
   - "Auto-detect (Recommended)" — sets terminalWidth to detected value (e.g. 120)
-    Preview: `[GLM-5.1] │ pitpat-server │ tools: 3 │ git:(feat/nacos_2.5.2*)`
+    Preview: `pitpat-server │ tools: 3 │ (feat/nacos_2.5.2*) │ [GLM-5.1]`
   - "80 (Standard)" — standard terminal
-    Preview: `[GLM-5.1] │ pitpat-server git:(feat/nacos_2.5.2*)`
+    Preview: `pitpat-server (feat/nacos_2.5.2*) │ [GLM-5.1]`
   - "120 (Wide)" — modern wide terminal
   - "160 (Ultra-wide)" — very wide or side panel
 
@@ -76,9 +76,9 @@ The HUD uses a fallback of **40 characters** when auto-detection fails. This cau
 ## Step 3: Preview & Confirm
 
 Show preview of HUD at different widths:
-- 40: `[GLM-5.1] │ git:(feat/nac...`
-- 80: `[GLM-5.1] │ pitpat-server git:(feat/nacos_2.5.2*)`
-- 120: `[GLM-5.1] │ pitpat-server │ tools: 3 │ git:(feat/nacos_2.5.2*)`
+- 40: `(feat/nac... │ [GLM-5.1]`
+- 80: `pitpat-server (feat/nacos_2.5.2*) │ [GLM-5.1]`
+- 120: `pitpat-server │ tools: 3 │ (feat/nacos_2.5.2*) │ [GLM-5.1]`
 
 Summarize changes and ask: "Apply these settings?"
 
@@ -91,7 +91,7 @@ Write to `~/.claude/plugins/claude-statusline/config.json`.
 
 | Setting | Config Key | Values |
 |---------|-----------|--------|
-| Terminal width fallback | `terminalWidth` | number (e.g. `80`, `120`) |
+| Terminal width | `terminalWidth` | number (e.g. `80`, `120`) — authoritative width; the statusline subprocess cannot detect terminal size |
 | Path visibility | `display.showProject` | `true` / `false` |
 | Path depth | `pathLevels` | `1` / `2` / `3` |
 
