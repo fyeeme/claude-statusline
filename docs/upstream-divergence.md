@@ -8,13 +8,11 @@
 |---|---|
 | 上游基准 | `release-0.2.0` = `b29bd34`（PR #616） |
 | 分叉点（merge-base） | `3d9f7b7` feat: add external usage snapshot fallback (#478) |
-| fork 独有提交数 | 40+（见 `git log --oneline 72c33ff --not b29bd34`） |
-| 功能偏离范围 | **全部集中在 `src/`**（共 30 个文件，+1609 / −54） |
-| 元数据偏离 | **无** —— `package.json`（version=0.2.0）/ `plugin.json` / `CLAUDE.md` 全部跟随上游，零定制 |
+| fork 独有提交数 | 50+（含 render 共享工具提取、颜色默认值改 none、expanded badge 右移、`terminalWidth`、缓存 0o600 加固） |
+| 功能偏离范围 | **全部集中在 `src/`**（含 4 个新 render 共享模块） |
+| 元数据偏离 | `package.json` version = **`1.0.0`**（上游 release-0.2.0 为 `0.2.0`；fork 独立版本号）；其余 `plugin.json`/`marketplace.json` 命名为 `claude-statusline`（上游 `claude-hud`） |
 
-**核心改动一句话**：在上游的 statusline 基础上，新增 **GLM / DeepSeek 第三方 provider 的用量显示**（含余额、自然周 token、会话成本估算），并配套重写了 compact 布局、分隔符、颜色与缓存命中率口径。
-
-> ⚠️ 当前仓库处于「合并 release-0.2.0 + 会话修复」的中间态，部分改动**尚未 commit**。后续 diff 时请以提交后的 HEAD 为准。
+**核心改动一句话**：在上游的 statusline 基础上，新增 **GLM / DeepSeek 第三方 provider 的用量显示**（含余额、自然周 token、会话成本估算），并配套重写了 compact 布局、分隔符、颜色与缓存命中率口径；后续又统一了元素配色为裸文本（`none`）、expanded 布局下 badge 右移、引入 `terminalWidth` 权威宽度源，并加固缓存文件权限。
 
 ---
 
@@ -31,6 +29,19 @@
 | **DeepSeek provider** | `src/usage/deepseek/{api,cache,index,pricing}.ts` | 查余额(balance/currency)、自然周 token(weeklyTokens)、5min 缓存、provider 内维护模型定价 |
 
 **合并注意**：上游从未引用 `src/usage/*`，但 fork 通过 `src/index.ts` 接入（见 D）。若上游未来重构入口，需保证 `getUsage` 路由器仍被调用，否则 GLM/DeepSeek 用量将**静默失效**（这是本次合并曾被破坏的根因）。
+
+### A2. 渲染层共享工具模块（fork 独有，上游无对应文件）
+
+从原 `src/render/index.ts` / 各 render line 中提取的共享代码，避免重复。上游无同名文件，合并几乎不冲突，但需保证 import 路径不被上游重构破坏。
+
+| 模块 | 职责 |
+|---|---|
+| `src/render/measure.ts` | `visualLength()` / `stripAnsi()` / `segmentGraphemes()` / `graphemeWidth()` —— 可见宽度与 ANSI 去壳。`render/index.ts` 的 wrap/truncate 依赖它 |
+| `src/render/format.ts` | `formatTokens()` / `formatContextValue()` —— token 格式化与 context 值渲染，被 identity / session-tokens / session-line 共享 |
+| `src/render/sanitize.ts` | `sanitize()` / `CONTROL_AND_BIDI_PATTERN` —— 剩除控制/ bidi 字符，被 added-dirs / advisor / project / skills-mcp-line 共享 |
+| `src/render/hyperlink.ts` | `safeHyperlink()` —— OSC 8 安全超链接（仅 file:/https: 协议，URL 先 sanitize），被 added-dirs / project 共享 |
+
+> 注：`render/index.ts` 仍保留了本地 `ANSI_ESCAPE_PATTERN`/`ANSI_ESCAPE_GLOBAL`（供 `sliceVisible`/`splitLineBySeparators` 使用），与 `measure.ts` 内的定义一致。这是为避免循环依赖的有意保留，非 bug。
 
 ---
 
@@ -53,6 +64,8 @@
 **新增项**
 - `display.separator`（默认 `' | '`，半角带空格）—— 取代上游各处硬编码的分隔符
 - `usage.fiveHourRefreshSec`（30）/ `usage.sevenDayRefreshSec`（180）—— GLM 缓存 TTL
+- `terminalWidth`（默认 `null`）—— **权威终端宽度**。statusline 子进程无法检测真实终端尺寸（`stdout.columns`/`COLUMNS` 不可用），设此字段为唯一可靠宽度源，驱动 wrap 与布局。优先级高于 detected width / `maxWidth`（仅 `forceMaxWidth` 能覆盖）。详见 E8
+- `colors.*` 全量可配（上游已有部分；fork 补齐 model/project/git/gitBranch/custom/barFilled/barEmpty）
 
 **默认值调整（fork 有意改的，不要被上游覆盖回去）**
 | 字段 | 上游默认 | fork 默认 | 原因 |
@@ -61,6 +74,13 @@
 | `display.contextValue` | `'percent'` | **`'both'`** | 同时显示百分比与 token |
 | `display.usageBarEnabled` | `true` | **`false`** | 同上 |
 | `display.contextWarningThreshold` | `70` | **`65`** | 颜色阈值统一到 65/85 |
+| `colors.model` | `cyan` | **`none`** | 裸文本，与其他元素统一（用户可显式配色） |
+| `colors.project` | `yellow` | **`none`** | 同上 |
+| `colors.git` | `magenta` | **`none`** | 同上 |
+| `colors.gitBranch` | `cyan` | **`none`** | 同上 |
+| `colors.label` | `dim` | **`none`** | 同上 |
+
+> `colors.* = 'none'` 表示裸终端前景色（不加 ANSI 色码），用户仍可通过 config 显式覆盖。与 E3 的阈值色（warning/critical）无关——阈值色在超阈值时仍生效。
 
 **冲突风险：高**。上游若调默认值，需逐项核对，**优先保留 fork 的有意图改动**（尤其 4 个默认值调整）。
 
@@ -121,7 +141,19 @@
 ### E7. `src/render/width.ts`（宽度计算）
 - 新增 `isZeroWidthCodePoint()`：U+200B–200F / U+FEFF 算 **0 宽**（配合 E6 零宽断点）
 
-**冲突风险：中-高**（usage.ts / colors.ts / index.ts 改动密集）。合并时优先保留 fork 版，仅吸收上游对其他渲染行（project/environment/session-time 等的中性改进）。
+### E8. `src/render/lines/project.ts` 与 `session-line.ts`（expanded 项目行重排）
+- **去掉 `git:` 前缀**：上游 `git:(branch*)` → fork `(branch*)`（紧挨项目名）
+- **expanded 布局下 badge 移到行尾**：上游 `[model] | project (git)` → fork `project (git) | [model]`，badge 作为最后一个 segment（effort 作为独立段紧随其后 `[model] | effort`）
+- **effort 从 badge 内拆出**：上游 `[model ◔ medium]` → fork `[model] | ◔ medium`
+- **compact 布局不变**：仍走 `renderSessionLine`，badge 在行首、effort 内嵌括号
+
+> 设计动机：statusline 子进程无法检测终端宽度，badge 在行尾避免被 wrap 截断到行首的视觉突变；`terminalWidth`（见 C）生效后 wrap 自然处理布局。
+
+### E9. `src/render/index.ts`（宽度解析 + measure 提取）
+- 宽度解析新增最高优先级：`config.terminalWidth` > detected > `maxWidth`（`forceMaxWidth` 仍可覆盖）
+- `visualLength`/`stripAnsi`/`segmentGraphemes`/`graphemeWidth` 从本文件提取到 `src/render/measure.ts`（见 A2）
+
+**冲突风险：中-高**（usage.ts / colors.ts / index.ts / project.ts 改动密集）。合并时优先保留 fork 版，仅吸收上游对其他渲染行的中性改进。
 
 ---
 
@@ -159,21 +191,38 @@
 
 ---
 
+## I. 缓存安全与输入净化（fork 加固，上游未做）
+
+缓存文件可能携带 credential / 余额信息，fork 加了文件权限与原子写防护；并对用户可配置的显示文本加了隐藏字符过滤，防 bidi/零宽字符注入。
+
+| 文件 | 偏离 |
+|---|---|
+| `src/context-cache.ts` | `writeFileSync` 改用 `{ mode: 0o600 }`（仅 owner 可读写） |
+| `src/usage/deepseek/cache.ts` | 原子写：先写 `.tmp`（0o600）再 `rename`，最后 `chmod 0o600` best-effort。防并发/中断产生半写文件 |
+| `src/usage/glm/cache.ts` | `readState` 简化：删除上游的 5ms busy-wait 重试逻辑（POSIX rename 原子后不再需要）；返回 null 于任何错误 |
+| `src/usage/deepseek/index.ts` | `weeklyTokens` 回退从 `||` 改为 `??`：保留合法的 `0` 值（`||` 会把 `0` 当假丢弃） |
+| `src/external-usage.ts` | `sanitizeBalanceLabel` 额外剩除 U+00AD（软连字符）/ U+200B（零宽空格）/ U+FEFF（BOM），防 balance label 隐藏字符欺骗 |
+
+**冲突风险：低-中**。这些是防御性加固，上游若重构缓存逻辑需保留 0o600 与原子写意图。
+
+---
+
 ## 合并上游的标准流程
 
 1. **拉取上游**：`git fetch upstream && git log upstream/main` 看新版改动。
 2. **聚焦 src/ 冲突**：`git diff upstream/<new-tag> -- src/`，**对照本文档逐文件判断归属**：
-   - A 节模块（`src/usage/*`）→ 几乎不冲突，保留 fork
-   - B/C/D/E-F 节的修改文件 → **高冲突区**，以 fork 为基底，吸收上游中性改进，**死守 provider 接线与默认值意图**
+   - A/A2 节模块（`src/usage/*`、`src/render/{measure,format,sanitize,hyperlink}.ts`）→ 几乎不冲突，保留 fork
+   - B/C/D/E-F/I 节的修改文件 → **高冲突区**，以 fork 为基底，吸收上游中性改进，**死守 provider 接线与默认值意图**
 3. **接线回归测试**：合并后必须验证——
    - `npm run build` 零错误
-   - `npm test` 全绿（已知遗留：`usage-cache.test.js` February 日期边界，与功能无关）
+   - `npm test` 全绿（已知遗留：`usage-cache.test.js` February 日期边界；`render-width.test.js` 两个 OSC 8 宽度测试 —— 均为预存与功能无关）
    - **provider 专属测试** `node --test tests/deepseek-usage.test.js tests/glm-usage.test.js tests/glm-detect.test.js tests/external-usage.test.js` 全绿
 4. **入口接线核对**：确认 `src/index.ts` 仍调用 `getUsage` 路由器（D 节），否则 GLM/DeepSeek 静默失效。
-5. **默认值核对**：C 节 4 个默认值调整未被上游覆盖回去。
+5. **默认值核对**：C 节的默认值调整（含 `colors.* = none`）未被上游覆盖回去。
+6. **宽度接线核对**：确认 `render()` 仍把 `config.terminalWidth` 作为最高优先级宽度源（E9），否则 statusline 退化为不可自适应宽度。
 
 ## 冲突热点优先级
 
-🔴 **高**：`src/index.ts`（接线）· `src/types.ts` · `src/config.ts` · `src/render/lines/usage.ts`
-🟡 **中**：`src/render/colors.ts` · `src/render/session-line.ts` · `src/render/index.ts`
-🟢 **低**：`src/usage/*`（新模块）· `src/render/width.ts` · `src/render/lines/{project,environment}.ts` · `src/cost.ts`
+🔴 **高**：`src/index.ts`（接线）· `src/types.ts` · `src/config.ts`（含 `terminalWidth` / `colors.*` 默认值）· `src/render/lines/usage.ts`
+🟡 **中**：`src/render/colors.ts` · `src/render/session-line.ts` · `src/render/index.ts`（宽度解析）· `src/render/lines/project.ts`（badge 重排 / `git:` 移除）
+🟢 **低**：`src/usage/*` 与 `src/render/{measure,format,sanitize,hyperlink}.ts`（新模块）· `src/render/width.ts` · `src/render/lines/environment.ts` · `src/cost.ts` · `src/context-cache.ts` · `src/usage/*/cache.ts`（0o600 / 原子写）

@@ -34,6 +34,7 @@ test('loadConfig returns valid config structure', async () => {
   // showSeparators must be boolean
   assert.equal(typeof config.showSeparators, 'boolean', 'showSeparators should be boolean');
   assert.ok(config.maxWidth === null || (typeof config.maxWidth === 'number' && config.maxWidth > 0), 'maxWidth should be null or a positive number');
+  assert.ok(config.terminalWidth === null || (typeof config.terminalWidth === 'number' && config.terminalWidth > 0), 'terminalWidth should be null or a positive number');
   assert.ok(Array.isArray(config.elementOrder), 'elementOrder should be an array');
   assert.ok(config.elementOrder.length > 0, 'elementOrder should not be empty');
   assert.deepEqual(config.elementOrder, DEFAULT_ELEMENT_ORDER, 'elementOrder should default to the full expanded layout');
@@ -112,6 +113,29 @@ test('mergeConfig preserves explicit forceMaxWidth=true', () => {
 test('mergeConfig falls back to false for invalid forceMaxWidth values', () => {
   assert.equal(mergeConfig({ forceMaxWidth: 'yes' }).forceMaxWidth, false);
   assert.equal(mergeConfig({ forceMaxWidth: 1 }).forceMaxWidth, false);
+});
+
+test('mergeConfig defaults terminalWidth to null', () => {
+  assert.equal(mergeConfig({}).terminalWidth, null);
+  assert.equal(DEFAULT_CONFIG.terminalWidth, null);
+});
+
+test('mergeConfig preserves a valid terminalWidth', () => {
+  assert.equal(mergeConfig({ terminalWidth: 120 }).terminalWidth, 120);
+  assert.equal(mergeConfig({ terminalWidth: 80 }).terminalWidth, 80);
+});
+
+test('mergeConfig floors terminalWidth to an integer', () => {
+  assert.equal(mergeConfig({ terminalWidth: 100.9 }).terminalWidth, 100);
+});
+
+test('mergeConfig falls back to null for invalid terminalWidth values', () => {
+  assert.equal(mergeConfig({ terminalWidth: 0 }).terminalWidth, null);
+  assert.equal(mergeConfig({ terminalWidth: -5 }).terminalWidth, null);
+  assert.equal(mergeConfig({ terminalWidth: 'wide' }).terminalWidth, null);
+  assert.equal(mergeConfig({ terminalWidth: null }).terminalWidth, null);
+  assert.equal(mergeConfig({ terminalWidth: NaN }).terminalWidth, null);
+  assert.equal(mergeConfig({ terminalWidth: Infinity }).terminalWidth, null);
 });
 
 
