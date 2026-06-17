@@ -1,2 +1,2 @@
-[Opus] | my-project
+my-project | [Opus]
 Context 29% (45k/200k)

@@ -642,8 +642,10 @@ test('renderProjectLine places customLine at end when position is last', () => {
   ctx.config.display.customLinePosition = 'last';
   const line = stripAnsi(renderProjectLine(ctx) ?? '');
   const customIdx = line.indexOf('prod-server');
-  const modelIdx = line.indexOf('[Opus]');
-  assert.ok(customIdx > modelIdx, 'custom line should appear after model badge when position is last');
+  const projectIdx = line.indexOf('my-project');
+  // The model badge is now rendered as the trailing right-aligned segment,
+  // so customLine (position=last) appears at the end of the LEFT content.
+  assert.ok(customIdx > projectIdx, 'custom line should appear after the project segment when position is last');
 });
 
 test('renderProjectLine applies modelFormat compact (strips context suffix)', () => {

@@ -11,6 +11,7 @@ import { renderAdvisorLine } from './advisor.js';
 import { normalizeAddedDirs, basenameOf, truncateBasename, MAX_RENDERED_ADDED_DIRS } from './added-dirs.js';
 import { sanitize as sanitizeDisplayText } from '../sanitize.js';
 import { safeHyperlink } from '../hyperlink.js';
+import { visualLength } from '../measure.js';
 
 function getFileHref(filePath: string): string | null {
   try {
@@ -30,11 +31,16 @@ function resolvePathWithinCwd(cwd: string, candidatePath: string): string | null
   return null;
 }
 
-export function renderProjectLine(ctx: RenderContext): string | null {
+export function renderProjectLine(ctx: RenderContext, terminalWidth: number | null = null): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
   const separator = display?.separator ?? ' | ';
   const parts: string[] = [];
+
+  // Model badge is rendered on the RIGHT (right-aligned to terminal width)
+  // rather than inline with the project/git segments. It is appended after
+  // the left content is joined.
+  let rightPart: string | null = null;
 
   const customLine = display?.customLine;
   const customLinePosition = display?.customLinePosition ?? 'last';
@@ -46,13 +52,17 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     const model = formatModelName(getModelName(ctx.stdin), ctx.config?.display?.modelFormat, ctx.config?.display?.modelOverride);
     const providerLabel = getProviderLabel(ctx.stdin);
     const modelQualifier = providerLabel ?? undefined;
-    let modelDisplay = modelQualifier ? `${model} | ${modelQualifier}` : model;
+    const modelDisplay = modelQualifier ? `${model} | ${modelQualifier}` : model;
+    const badge = modelColor(`[${modelDisplay}]`, colors);
+    // Effort/thinking level is shown as its own segment after the badge
+    // (e.g. `[glm-5.2] | ◔ medium`) instead of inside the brackets.
+    let effortLabel = '';
     if (ctx.effortLevel && ctx.effortSymbol) {
-      modelDisplay += ` ${ctx.effortSymbol} ${ctx.effortLevel}`;
+      effortLabel = label(`${ctx.effortSymbol} ${ctx.effortLevel}`, colors);
     } else if (ctx.effortLevel) {
-      modelDisplay += ` ${ctx.effortLevel}`;
+      effortLabel = label(ctx.effortLevel, colors);
     }
-    parts.push(modelColor(`[${modelDisplay}]`, colors));
+    rightPart = effortLabel ? `${badge}${separator}${effortLabel}` : badge;
   }
 
   let projectPart: string | null = null;
@@ -172,11 +182,33 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     parts.push(customColor(customLine, colors));
   }
 
-  if (parts.length === 0) {
+  if (parts.length === 0 && !rightPart) {
     return null;
   }
 
-  return parts.join(separator);
+  const leftContent = parts.join(separator);
+
+  if (!rightPart) {
+    return leftContent || null;
+  }
+
+  // Right-align the model badge segment to the terminal width when the
+  // width is known and there is room. Otherwise fall back to a plain
+  // `left | badge` join so the badge still renders.
+  if (
+    parts.length > 0 &&
+    typeof terminalWidth === 'number' &&
+    terminalWidth > 0
+  ) {
+    const leftWidth = visualLength(leftContent);
+    const rightWidth = visualLength(rightPart);
+    const gap = terminalWidth - leftWidth - rightWidth;
+    if (gap >= 2) {
+      return `${leftContent}${' '.repeat(gap)}${rightPart}`;
+    }
+  }
+
+  return parts.length > 0 ? `${leftContent}${separator}${rightPart}` : rightPart;
 }
 
 function formatAheadCount(
