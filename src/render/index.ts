@@ -314,7 +314,7 @@ function renderElementLine(
 
   switch (element) {
     case 'project':
-      return renderProjectLine(ctx, options?.terminalWidth);
+      return renderProjectLine(ctx);
     case 'addedDirs':
       return renderAddedDirsLine(ctx);
     case 'context':
@@ -446,9 +446,15 @@ export function render(ctx: RenderContext): void {
   const showSeparators = ctx.config?.showSeparators ?? false;
   const detectedWidth = getTerminalWidth({ preferEnv: true, fallback: UNKNOWN_TERMINAL_WIDTH });
   const configuredMaxWidth = ctx.config?.maxWidth ?? UNKNOWN_TERMINAL_WIDTH;
+  // Priority: explicit config.terminalWidth (authoritative — the subprocess
+  // cannot detect the real terminal size) > detected width > configured
+  // maxWidth fallback. forceMaxWidth still overrides maxWidth as before.
+  const configuredTerminalWidth = ctx.config?.terminalWidth ?? UNKNOWN_TERMINAL_WIDTH;
   const terminalWidth = ctx.config?.forceMaxWidth && configuredMaxWidth !== UNKNOWN_TERMINAL_WIDTH
     ? configuredMaxWidth
-    : (detectedWidth ?? configuredMaxWidth ?? UNKNOWN_TERMINAL_WIDTH);
+    : (configuredTerminalWidth !== UNKNOWN_TERMINAL_WIDTH
+      ? configuredTerminalWidth
+      : (detectedWidth ?? configuredMaxWidth ?? UNKNOWN_TERMINAL_WIDTH));
 
   let lines: string[];
 

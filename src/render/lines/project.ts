@@ -11,7 +11,6 @@ import { renderAdvisorLine } from './advisor.js';
 import { normalizeAddedDirs, basenameOf, truncateBasename, MAX_RENDERED_ADDED_DIRS } from './added-dirs.js';
 import { sanitize as sanitizeDisplayText } from '../sanitize.js';
 import { safeHyperlink } from '../hyperlink.js';
-import { visualLength } from '../measure.js';
 
 function getFileHref(filePath: string): string | null {
   try {
@@ -31,16 +30,11 @@ function resolvePathWithinCwd(cwd: string, candidatePath: string): string | null
   return null;
 }
 
-export function renderProjectLine(ctx: RenderContext, terminalWidth: number | null = null): string | null {
+export function renderProjectLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
   const separator = display?.separator ?? ' | ';
   const parts: string[] = [];
-
-  // Model badge is rendered on the RIGHT (right-aligned to terminal width)
-  // rather than inline with the project/git segments. It is appended after
-  // the left content is joined.
-  let rightPart: string | null = null;
 
   const customLine = display?.customLine;
   const customLinePosition = display?.customLinePosition ?? 'last';
@@ -48,6 +42,11 @@ export function renderProjectLine(ctx: RenderContext, terminalWidth: number | nu
     parts.push(customColor(customLine, colors));
   }
 
+  // Build the model badge + effort segment. It is appended LAST so the
+  // badge sits on the right side of the line by default, and the width-
+  // adaptive wrap (now driven by config.terminalWidth) keeps the layout
+  // correct without fragile padding math.
+  let modelPart: string | null = null;
   if (display?.showModel !== false) {
     const model = formatModelName(getModelName(ctx.stdin), ctx.config?.display?.modelFormat, ctx.config?.display?.modelOverride);
     const providerLabel = getProviderLabel(ctx.stdin);
@@ -56,13 +55,13 @@ export function renderProjectLine(ctx: RenderContext, terminalWidth: number | nu
     const badge = modelColor(`[${modelDisplay}]`, colors);
     // Effort/thinking level is shown as its own segment after the badge
     // (e.g. `[glm-5.2] | ◔ medium`) instead of inside the brackets.
-    let effortLabel = '';
     if (ctx.effortLevel && ctx.effortSymbol) {
-      effortLabel = label(`${ctx.effortSymbol} ${ctx.effortLevel}`, colors);
+      modelPart = `${badge}${separator}${label(`${ctx.effortSymbol} ${ctx.effortLevel}`, colors)}`;
     } else if (ctx.effortLevel) {
-      effortLabel = label(ctx.effortLevel, colors);
+      modelPart = `${badge}${separator}${label(ctx.effortLevel, colors)}`;
+    } else {
+      modelPart = badge;
     }
-    rightPart = effortLabel ? `${badge}${separator}${effortLabel}` : badge;
   }
 
   let projectPart: string | null = null;
@@ -178,59 +177,20 @@ export function renderProjectLine(ctx: RenderContext, terminalWidth: number | nu
     }
   }
 
+  // Model badge + effort segment sits last (right side of the line).
+  if (modelPart) {
+    parts.push(modelPart);
+  }
+
   if (customLine && customLinePosition === 'last') {
     parts.push(customColor(customLine, colors));
   }
 
-  if (parts.length === 0 && !rightPart) {
+  if (parts.length === 0) {
     return null;
   }
 
-  const leftContent = parts.join(separator);
-  const widthKnown = typeof terminalWidth === 'number' && terminalWidth > 0;
-
-  // No badge → just the left content.
-  if (!rightPart) {
-    return leftContent || null;
-  }
-
-  // No left content → badge alone (no padding).
-  if (parts.length === 0) {
-    return rightPart;
-  }
-
-  const leftWidth = visualLength(leftContent);
-  const rightWidth = visualLength(rightPart);
-
-  // Right-align the badge to the terminal width when there is room for a
-  // visible gap. Reserve a small safety margin (1 cell) so that a slightly
-  // inflated width report does not push the badge past the real right
-  // edge and get truncated by the host. The padding fills terminalWidth - 1.
-  if (widthKnown) {
-    const gap = terminalWidth - leftWidth - rightWidth;
-    if (gap >= 3) {
-      const pad = gap - 1;
-      return `${leftContent}${' '.repeat(pad)}${rightPart}`;
-    }
-  }
-
-  // Degradation: left + right cannot fit side by side with a right-aligned
-  // gap. When the width is unknown we cannot know whether padding would
-  // overflow, so fall back to the plain inline join (left | badge) — this
-  // is the historical behavior and stays correct when content is short.
-  // When the width IS known but the line would overflow, the badge is put
-  // on its own line (via embedded newline) so the outer wrap step never
-  // truncates it mid-bracket (e.g. `[glm-5.2[`).
-  if (!widthKnown) {
-    return `${leftContent}${separator}${rightPart}`;
-  }
-
-  // Width known and gap < 3: if a plain join still fits, use it; otherwise
-  // wrap the badge to its own line to avoid truncation.
-  if (leftWidth + rightWidth + 2 <= terminalWidth) {
-    return `${leftContent}${separator}${rightPart}`;
-  }
-  return `${leftContent}\n${rightPart}`;
+  return parts.join(separator);
 }
 
 function formatAheadCount(

@@ -94,6 +94,7 @@ export interface HudConfig {
   lineLayout: LineLayoutType;
   showSeparators: boolean;
   pathLevels: 1 | 2 | 3;
+  terminalWidth: number | null;
   maxWidth: number | null;
   forceMaxWidth: boolean;
   elementOrder: HudElement[];
@@ -183,6 +184,7 @@ export const DEFAULT_CONFIG: HudConfig = {
   lineLayout: 'expanded',
   showSeparators: false,
   pathLevels: 1,
+  terminalWidth: null,
   maxWidth: null,
   forceMaxWidth: false,
   elementOrder: [...DEFAULT_ELEMENT_ORDER],
@@ -531,6 +533,15 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     ? Math.floor(rawMaxWidth)
     : null;
 
+  // Explicit terminal width override. When set, the renderer uses this as
+  // the authoritative terminal width (highest priority) — the statusline
+  // subprocess cannot read stdout.columns or COLUMNS, so this is the only
+  // reliable way to adapt rendering to the real terminal size.
+  const rawTerminalWidth = (migrated as Record<string, unknown>).terminalWidth;
+  const terminalWidth = (typeof rawTerminalWidth === 'number' && Number.isFinite(rawTerminalWidth) && rawTerminalWidth > 0)
+    ? Math.floor(rawTerminalWidth)
+    : null;
+
   const elementOrder = validateElementOrder(migrated.elementOrder);
   const forceMaxWidth = typeof (migrated as Record<string, unknown>).forceMaxWidth === 'boolean'
     ? (migrated as Record<string, unknown>).forceMaxWidth as boolean
@@ -766,7 +777,7 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
       : DEFAULT_CONFIG.usage.sevenDayRefreshSec,
   };
 
-  return { language, lineLayout, showSeparators, pathLevels, maxWidth, forceMaxWidth, elementOrder, gitStatus, display, colors, usage: usageFinal };
+  return { language, lineLayout, showSeparators, pathLevels, terminalWidth, maxWidth, forceMaxWidth, elementOrder, gitStatus, display, colors, usage: usageFinal };
 }
 
 export async function loadConfig(): Promise<HudConfig> {
