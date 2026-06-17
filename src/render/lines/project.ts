@@ -8,13 +8,9 @@ import { git as gitColor, gitBranch as gitBranchColor, warning as warningColor, 
 import { t } from '../../i18n/index.js';
 import { renderCostEstimate } from './cost.js';
 import { renderAdvisorLine } from './advisor.js';
-import { normalizeAddedDirs, sanitize as sanitizeDisplayText, basenameOf, truncateBasename, MAX_RENDERED_ADDED_DIRS } from './added-dirs.js';
-
-function hyperlink(uri: string, text: string): string {
-  const esc = '\x1b';
-  const st = '\\';
-  return `${esc}]8;;${uri}${esc}${st}${text}${esc}]8;;${esc}${st}`;
-}
+import { normalizeAddedDirs, basenameOf, truncateBasename, MAX_RENDERED_ADDED_DIRS } from './added-dirs.js';
+import { sanitize as sanitizeDisplayText } from '../sanitize.js';
+import { safeHyperlink } from '../hyperlink.js';
 
 function getFileHref(filePath: string): string | null {
   try {
@@ -32,23 +28,6 @@ function resolvePathWithinCwd(cwd: string, candidatePath: string): string | null
     return resolvedPath;
   }
   return null;
-}
-
-function safeHyperlink(uri: string | undefined | null, text: string): string {
-  if (!uri) {
-    return text;
-  }
-
-  const sanitizedUri = sanitizeDisplayText(uri);
-  try {
-    const parsed = new URL(sanitizedUri);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'file:') {
-      return text;
-    }
-    return hyperlink(parsed.toString(), text);
-  } catch {
-    return text;
-  }
 }
 
 export function renderProjectLine(ctx: RenderContext): string | null {

@@ -1,7 +1,7 @@
 import type { RenderContext } from '../../types.js';
 import { label } from '../colors.js';
 import { t } from '../../i18n/index.js';
-import { sanitize as sanitizeDisplayText } from './added-dirs.js';
+import { sanitize as sanitizeDisplayText } from '../sanitize.js';
 
 const ADVISOR_ID_PATTERN = /^(?:claude-)?(opus|sonnet|haiku)-(\d+)-(\d+)/i;
 
