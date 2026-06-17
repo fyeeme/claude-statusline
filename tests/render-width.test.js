@@ -188,7 +188,7 @@ test('render can wrap git to its own line without truncating the branch name', (
   });
 
   assert.ok(lines.every(line => displayWidth(line) <= 55), 'all lines should fit terminal width');
-  assert.ok(lines.some(line => line.includes('git:(feature/this-is-a-very-long-branch-name*)')), 'git branch should remain intact on its own line');
+  assert.ok(lines.some(line => line.includes('(feature/this-is-a-very-long-branch-name*)')), 'git branch should remain intact on its own line');
 });
 
 test('render falls back to COLUMNS env when stdout.columns is unavailable', () => {

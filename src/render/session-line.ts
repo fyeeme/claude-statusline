@@ -124,7 +124,7 @@ export function renderSessionLine(ctx: RenderContext): string {
       }
     }
 
-    gitPart = `${gitColor('git:(', colors)}${gitBranchColor(gitParts.join(''), colors)}${gitColor(')', colors)}`;
+    gitPart = `${gitColor('(', colors)}${gitBranchColor(gitParts.join(''), colors)}${gitColor(')', colors)}`;
   }
 
   if (projectPart && gitPart) {

@@ -565,8 +565,8 @@ test('mergeConfig defaults colors to expected semantic palette', () => {
   assert.equal(config.colors.warning, 'yellow');
   assert.equal(config.colors.usageWarning, 'yellow');
   assert.equal(config.colors.critical, 'red');
-  assert.equal(config.colors.model, 'cyan');
-  assert.equal(config.colors.project, 'yellow');
+  assert.equal(config.colors.model, 'none');
+  assert.equal(config.colors.project, 'none');
   assert.equal(config.colors.git, 'none');
   assert.equal(config.colors.gitBranch, 'none');
   assert.equal(config.colors.label, 'none');

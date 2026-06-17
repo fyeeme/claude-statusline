@@ -697,7 +697,7 @@ test('renderProjectLine uses configurable element colors', () => {
   const line = renderProjectLine(ctx);
   assert.ok(line?.includes('\x1b[38;5;214m[Opus]\x1b[0m'));
   assert.ok(line?.includes('\x1b[38;5;82mmy-project\x1b[0m'));
-  assert.ok(line?.includes('\x1b[38;5;220mgit:(\x1b[0m'));
+  assert.ok(line?.includes('\x1b[38;5;220m(\x1b[0m'));
   assert.ok(line?.includes('\x1b[38;2;51;255;0mmain\x1b[0m'));
   assert.ok(line?.includes('\x1b[38;2;255;102;0mStay sharp\x1b[0m'));
 });
@@ -898,7 +898,7 @@ test('renderSessionLine omits project name when showProject is false', () => {
   ctx.config.display.showProject = false;
   const line = renderSessionLine(ctx);
   assert.ok(!line.includes('my-project'), 'should not include project name when showProject is false');
-  assert.ok(line.includes('git:('), 'should still include git status when showProject is false');
+  assert.ok(line.includes('('), 'should still include git status when showProject is false');
 });
 
 test('renderProjectLine keeps git status when showProject is false', () => {
@@ -907,7 +907,7 @@ test('renderProjectLine keeps git status when showProject is false', () => {
   ctx.gitStatus = { branch: 'main', isDirty: true, ahead: 0, behind: 0 };
   ctx.config.display.showProject = false;
   const line = renderProjectLine(ctx);
-  assert.ok(line?.includes('git:('), 'should still include git status');
+  assert.ok(line?.includes('('), 'should still include git status');
   assert.ok(!line?.includes('my-project'), 'should hide project path');
 });
 
@@ -916,7 +916,7 @@ test('renderSessionLine displays git branch when present', () => {
   ctx.stdin.cwd = '/tmp/my-project';
   ctx.gitStatus = { branch: 'main', isDirty: false, ahead: 0, behind: 0 };
   const line = renderSessionLine(ctx);
-  assert.ok(line.includes('git:('));
+  assert.ok(line.includes('('));
   assert.ok(line.includes('main'));
 });
 
@@ -925,7 +925,7 @@ test('renderSessionLine omits git branch when null', () => {
   ctx.stdin.cwd = '/tmp/my-project';
   ctx.gitStatus = null;
   const line = renderSessionLine(ctx);
-  assert.ok(!line.includes('git:('));
+  assert.ok(!line.includes('('));
 });
 
 test('renderSessionLine displays branch with slashes', () => {
@@ -933,7 +933,7 @@ test('renderSessionLine displays branch with slashes', () => {
   ctx.stdin.cwd = '/tmp/my-project';
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   const line = renderSessionLine(ctx);
-  assert.ok(line.includes('git:('));
+  assert.ok(line.includes('('));
   assert.ok(line.includes('feature/add-auth'));
 });
 
@@ -943,7 +943,7 @@ test('renderSessionLine can give git its own segment for wrapping', () => {
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   ctx.config.gitStatus.branchOverflow = 'wrap';
   const line = stripAnsi(renderSessionLine(ctx));
-  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
+  assert.ok(line.includes('my-project | (feature/add-auth)'), 'git should render as a separate segment');
 });
 
 test('renderProjectLine can give git its own segment for wrapping', () => {
@@ -952,7 +952,7 @@ test('renderProjectLine can give git its own segment for wrapping', () => {
   ctx.gitStatus = { branch: 'feature/add-auth', isDirty: false, ahead: 0, behind: 0 };
   ctx.config.gitStatus.branchOverflow = 'wrap';
   const line = stripAnsi(renderProjectLine(ctx) ?? '');
-  assert.ok(line.includes('my-project | git:(feature/add-auth)'), 'git should render as a separate segment');
+  assert.ok(line.includes('my-project | (feature/add-auth)'), 'git should render as a separate segment');
 });
 
 test('renderToolsLine renders running and completed tools', () => {
@@ -2282,7 +2282,7 @@ test('renderSessionLine handles missing showFileStats config (backward compatibi
   };
   // Should not crash and should not show file stats (default is false)
   const line = renderSessionLine(ctx);
-  assert.ok(line.includes('git:('), 'should still show git info');
+  assert.ok(line.includes('('), 'should still show git info');
   assert.ok(!line.includes('!2'), 'should not show file stats when config missing');
 });
 

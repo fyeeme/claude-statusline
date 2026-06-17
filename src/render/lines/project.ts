@@ -111,7 +111,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
       }
     }
 
-    gitPart = `${gitColor('git:(', colors)}${gitInner.join(' ')}${gitColor(')', colors)}`;
+    gitPart = `${gitColor('(', colors)}${gitInner.join(' ')}${gitColor(')', colors)}`;
   }
 
   const projectWithDirs = projectPart && addedDirsPart
