@@ -74,7 +74,7 @@ export async function getDeepSeekUsage(
   const entry: DeepSeekCacheEntry = {
     balance: balance?.totalBalance ?? cached?.balance ?? '?',
     currency: balance?.currency ?? cached?.currency ?? 'CNY',
-    weeklyTokens: weeklyTokens || cached?.weeklyTokens || 0,
+    weeklyTokens: weeklyTokens ?? cached?.weeklyTokens ?? 0,
     fetchedAt: nowMs,
     ttlMs: deps.cacheTtlMs,
   };

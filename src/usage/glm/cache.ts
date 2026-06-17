@@ -49,23 +49,13 @@ function getStatePath(): string {
 /** Read .usage-state.json. Returns null on missing/invalid file. No TTL check. */
 export function readState(): CalibrationState | null {
   const statePath = getStatePath();
-  const maxRetries = 1;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (!fs.existsSync(statePath)) return null;
-      const raw = fs.readFileSync(statePath, 'utf-8');
-      return JSON.parse(raw) as CalibrationState;
-    } catch (err) {
-      // Retry once on parse error (concurrent write race)
-      if (attempt < maxRetries && (err as SyntaxError)?.name === 'SyntaxError') {
-        const start = Date.now();
-        while (Date.now() - start < 5) { /* busy wait 5ms */ }
-        continue;
-      }
-      return null;
-    }
+  try {
+    if (!fs.existsSync(statePath)) return null;
+    const raw = fs.readFileSync(statePath, 'utf-8');
+    return JSON.parse(raw) as CalibrationState;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /** Atomic write to .usage-state.json. */

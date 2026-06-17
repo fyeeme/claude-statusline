@@ -3,12 +3,20 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { readCache, writeCache, getErrorTtlMs, getRateLimitedTtlMs, appendLog, migrateOldCache, readState, writeState } from '../dist/usage/glm/cache.js';
 import { inferSubscriptionTime, computeCycleStart } from '../dist/usage/glm/calibration.js';
 
-const CACHE_DIR = path.join(os.homedir(), '.claude', 'plugins', 'claude-statusline');
-const CACHE_PATH = path.join(CACHE_DIR, '.usage-cache.json');
-const STATE_PATH = path.join(CACHE_DIR, '.usage-state.json');
+let TEMP_DIR;
+let CACHE_DIR;
+let CACHE_PATH;
+let STATE_PATH;
+
+function setupPaths(tempDir) {
+  CACHE_DIR = path.join(tempDir, '.claude', 'plugins', 'claude-statusline');
+  CACHE_PATH = path.join(CACHE_DIR, '.usage-cache.json');
+  STATE_PATH = path.join(CACHE_DIR, '.usage-state.json');
+}
 
 function makeCache(overrides = {}) {
   return {
@@ -37,9 +45,33 @@ function cleanup() {
   try { fs.unlinkSync(STATE_PATH + '.tmp'); } catch {}
 }
 
+function restoreEnvVar(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
+
 describe('usage-cache', () => {
-  beforeEach(() => cleanup());
-  afterEach(() => cleanup());
+  let originalHome;
+  let originalConfigDir;
+
+  beforeEach(async () => {
+    originalHome = process.env.HOME;
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    TEMP_DIR = await mkdtemp(path.join(os.tmpdir(), 'claude-statusline-usage-cache-'));
+    process.env.HOME = TEMP_DIR;
+    delete process.env.CLAUDE_CONFIG_DIR;
+    setupPaths(TEMP_DIR);
+    cleanup();
+  });
+
+  afterEach(async () => {
+    restoreEnvVar('HOME', originalHome);
+    restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
+    await rm(TEMP_DIR, { recursive: true, force: true });
+  });
 
   it('returns null when cache file does not exist', () => {
     assert.equal(readCache('glm'), null);
@@ -62,9 +94,9 @@ describe('usage-cache', () => {
   });
 
   it('returns null when TTL expired', () => {
-    writeCache(makeCache({ ttlMs: 1 }));
-    const start = Date.now();
-    while (Date.now() - start < 5) {}
+    // Write a cache entry with a timestamp far in the past so TTL is already expired
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(makeCache({ ttlMs: 1, timestamp: Date.now() - 10000 })), { mode: 0o600 });
     assert.equal(readCache('glm'), null);
   });
 
@@ -99,8 +131,24 @@ describe('usage-cache', () => {
 });
 
 describe('state file (readState/writeState)', () => {
-  beforeEach(() => cleanup());
-  afterEach(() => cleanup());
+  let originalHome;
+  let originalConfigDir;
+
+  beforeEach(async () => {
+    originalHome = process.env.HOME;
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    TEMP_DIR = await mkdtemp(path.join(os.tmpdir(), 'claude-statusline-usage-cache-'));
+    process.env.HOME = TEMP_DIR;
+    delete process.env.CLAUDE_CONFIG_DIR;
+    setupPaths(TEMP_DIR);
+    cleanup();
+  });
+
+  afterEach(async () => {
+    restoreEnvVar('HOME', originalHome);
+    restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
+    await rm(TEMP_DIR, { recursive: true, force: true });
+  });
 
   it('returns null when state file does not exist', () => {
     assert.equal(readState(), null);
@@ -120,10 +168,8 @@ describe('state file (readState/writeState)', () => {
     const subTime = new Date('2026-03-30T07:43:28.000Z').getTime();
     writeState({ calibratedLimit7d: 500_000_000, calibratedAt: Date.now(), subscriptionTimeMs: subTime });
 
-    // Expire the cache
-    writeCache(makeCache({ ttlMs: 1 }));
-    const start = Date.now();
-    while (Date.now() - start < 5) {}
+    // Expire the cache by writing an entry with a past timestamp
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(makeCache({ ttlMs: 1, timestamp: Date.now() - 10000 })), { mode: 0o600 });
 
     assert.equal(readCache('glm'), null);
     // State should still be readable
@@ -230,8 +276,24 @@ describe('computeCycleStart', () => {
 });
 
 describe('migrateOldCache', () => {
-  beforeEach(() => cleanup());
-  afterEach(() => cleanup());
+  let originalHome;
+  let originalConfigDir;
+
+  beforeEach(async () => {
+    originalHome = process.env.HOME;
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    TEMP_DIR = await mkdtemp(path.join(os.tmpdir(), 'claude-statusline-usage-cache-'));
+    process.env.HOME = TEMP_DIR;
+    delete process.env.CLAUDE_CONFIG_DIR;
+    setupPaths(TEMP_DIR);
+    cleanup();
+  });
+
+  afterEach(async () => {
+    restoreEnvVar('HOME', originalHome);
+    restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
+    await rm(TEMP_DIR, { recursive: true, force: true });
+  });
 
   it('migrates calibration fields from old cache to state file', () => {
     const subTime = new Date('2026-03-30T07:43:28.000Z').getTime();

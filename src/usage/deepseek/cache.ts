@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -29,7 +29,12 @@ export function readCache(nowMs: number = Date.now()): DeepSeekCacheEntry | null
 export function writeCache(entry: DeepSeekCacheEntry): void {
   try {
     mkdirSync(dirname(CACHE_PATH), { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify(entry), 'utf-8');
+
+    const tmpPath = CACHE_PATH + '.tmp';
+    writeFileSync(tmpPath, JSON.stringify(entry), { mode: 0o600 });
+    renameSync(tmpPath, CACHE_PATH);
+
+    try { chmodSync(CACHE_PATH, 0o600); } catch { /* best-effort */ }
   } catch {
     // best-effort
   }

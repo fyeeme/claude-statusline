@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat as fsStat, writeFile, utimes } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -636,6 +636,23 @@ test('applyContextWindowFallback restores cache for zero-percent streaming frame
       assert.equal(stdin.context_window.used_percentage, 58);
       assert.equal(stdin.context_window.remaining_percentage, 42);
     }
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('applyContextWindowFallback cache file has 0600 permissions', async () => {
+  const tempHome = await createTempHome();
+  const transcriptPath = '/tmp/session-a.jsonl';
+
+  try {
+    const stdin = makeHealthyFrame(transcriptPath);
+    applyContextWindowFallback(stdin, makeDeps(tempHome, 1_000_000));
+
+    const cachePath = getCachePath(tempHome, transcriptPath);
+    const fileStat = await fsStat(cachePath);
+    const mode = fileStat.mode & 0o777;
+    assert.equal(mode, 0o600, `Expected 0600, got ${mode.toString(8)}`);
   } finally {
     await rm(tempHome, { recursive: true, force: true });
   }

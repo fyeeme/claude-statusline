@@ -589,7 +589,7 @@ export function render(ctx: RenderContext): void {
   // Only wrap when terminal width is real (known). When width is the
   // UNKNOWN_TERMINAL_WIDTH fallback, wrapping would use an arbitrary value
   // and produce incorrect line breaks.
-  const wrapWidth = terminalWidth !== UNKNOWN_TERMINAL_WIDTH ? (terminalWidth ?? 0) : 0;
+  const wrapWidth = terminalWidth !== UNKNOWN_TERMINAL_WIDTH ? terminalWidth : 0;
   const visibleLines = physicalLines.flatMap(line => wrapLineToWidth(line, wrapWidth));
 
   for (const line of visibleLines) {

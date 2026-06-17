@@ -137,7 +137,7 @@ function writeCache(
       saved_at: now,
       session_name: sessionName ?? null,
     };
-    fs.writeFileSync(cachePath, JSON.stringify(payload), "utf8");
+    fs.writeFileSync(cachePath, JSON.stringify(payload), { mode: 0o600 });
     const timestampSeconds = now / 1000;
     fs.utimesSync(cachePath, timestampSeconds, timestampSeconds);
   } catch {

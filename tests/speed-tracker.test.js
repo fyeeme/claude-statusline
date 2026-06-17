@@ -132,7 +132,7 @@ test('getOutputSpeed ignores stale fallback windows', async () => {
   }
 });
 
-test('getOutputSpeed creates fallback cache under CLAUDE_CONFIG_DIR by default', async () => {
+test('getOutputSpeed creates fallback cache under CLAUDE_CONFIG_DIR when output tokens are missing', async () => {
   const tempHome = await createTempHome();
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const originalHome = process.env.HOME;
@@ -291,7 +291,7 @@ test('getOutputSpeed isolates cache across concurrent sessions', async () => {
   }
 });
 
-test('getOutputSpeed writes cache under CLAUDE_CONFIG_DIR by default', async () => {
+test('getOutputSpeed writes cache under CLAUDE_CONFIG_DIR with output tokens', async () => {
   const tempHome = await createTempHome();
   const customConfigDir = path.join(tempHome, '.claude-alt');
   const originalHome = process.env.HOME;

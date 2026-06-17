@@ -355,6 +355,21 @@ test('getUsageFromExternalSnapshot sanitizes balance labels before rendering', a
   }
 });
 
+test('getUsageFromExternalSnapshot strips zero-width characters from balance labels', async () => {
+  const updatedAt = Date.UTC(2026, 3, 20, 12, 0, 0);
+  const { filePath, cleanup } = await withTempFile(JSON.stringify({
+    updated_at: new Date(updatedAt).toISOString(),
+    balance_label: '\u200Bhidden\uFEFFtext\u00ADhere',
+  }));
+
+  try {
+    const usage = getUsageFromExternalSnapshot(makeConfig(filePath), updatedAt + 60_000);
+    assert.equal(usage?.balanceLabel, 'hiddentexthere');
+  } finally {
+    await cleanup();
+  }
+});
+
 test('getUsageFromExternalSnapshot ignores stale snapshots', async () => {
   const updatedAt = Date.UTC(2026, 3, 20, 12, 0, 0);
   const { filePath, cleanup } = await withTempFile(JSON.stringify({

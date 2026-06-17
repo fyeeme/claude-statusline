@@ -56,6 +56,7 @@ function sanitizeBalanceLabel(value: unknown): string | null {
     .replace(/\x1B[@-Z\\-_]/g, '')
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
     .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u206A-\u206F]/g, '')
+    .replace(/[\u00AD\u200B\uFEFF]/g, '')
     .trim();
 
   if (!sanitized) {
