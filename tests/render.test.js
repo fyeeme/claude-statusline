@@ -3181,54 +3181,62 @@ describe('renderProjectLine right-aligned model badge', () => {
     // Padded gap (>= 2 spaces) separates them — proves right-alignment, not a
     // plain ` | ` join.
     assert.ok(/[ ]{2,}/.test(line), `expected padding gap, got: ${line}`);
-    // Total visible width should equal the requested terminal width.
-    assert.equal(line.length, 60, `line should fill the terminal width: ${line}`);
-    // Badge should be flush right.
+    // A 1-cell safety margin is reserved so total width = terminalWidth - 1.
+    assert.equal(line.length, 59, `line should fill width-1 (margin): ${line}`);
+    // Badge should be flush right within the padded region.
     assert.ok(line.endsWith('[Opus]'), `badge should be right-aligned: ${line}`);
   });
 
-  test('falls back to left | badge when terminal width is unknown', () => {
+  test('inline join when terminal width is unknown (backward compatible)', () => {
     const ctx = baseContext();
     ctx.stdin.cwd = '/tmp/my-project';
     ctx.gitStatus = { branch: 'main', isDirty: false, ahead: 0, behind: 0 };
-    // No terminalWidth argument → unknown.
+    // No terminalWidth argument → unknown → plain inline `left | badge` join,
+    // which stays correct when content is short. No padding (cannot know how
+    // much to pad), and no forced newline.
     const line = stripAnsi(renderProjectLine(ctx) ?? '');
+    assert.ok(!line.includes('\n'), `unknown width should stay one line: ${line}`);
     assert.ok(line.includes('my-project'), `project missing: ${line}`);
     assert.ok(line.includes('[Opus]'), `badge missing: ${line}`);
-    // Plain ` | ` separator, no big padding gap.
     assert.ok(!/[ ]{2,}/.test(line), `should not pad when width unknown: ${line}`);
   });
 
-  test('falls back to left | badge when terminal width is too narrow', () => {
+  test('degrades to newline when terminal width is too narrow', () => {
     const ctx = baseContext();
     ctx.stdin.cwd = '/tmp/my-project';
     ctx.gitStatus = { branch: 'very-long-branch-name-here', isDirty: false, ahead: 0, behind: 0 };
-    // Width so small that left + right cannot fit with a >=2 gap.
-    const line = stripAnsi(renderProjectLine(ctx, 10) ?? '');
-    assert.ok(line.includes('my-project'), `project missing: ${line}`);
-    assert.ok(line.includes('[Opus]'), `badge missing: ${line}`);
-    // No big padding gap → degradation fallback engaged.
-    assert.ok(!/[ ]{2,}/.test(line), `should not pad when too narrow: ${line}`);
+    // Width so small that left + right cannot fit with a >=3 gap → newline.
+    const raw = renderProjectLine(ctx, 10) ?? '';
+    const lines = stripAnsi(raw).split('\n');
+    assert.equal(lines.length, 2, `narrow width should split into two lines: ${lines}`);
+    assert.ok(lines[0].includes('my-project'), `project missing on line 1: ${lines}`);
+    assert.ok(lines[1].includes('[Opus]'), `badge missing on line 2: ${lines}`);
+    for (const l of lines) {
+      assert.ok(!/[ ]{2,}/.test(l), `should not pad when too narrow: ${l}`);
+    }
   });
 
-  test('falls back when gap is exactly 1 (one space short of padding threshold)', () => {
+  test('inline join (no pad) when gap is exactly 2 and a plain join still fits', () => {
     const ctx = baseContext();
     ctx.stdin.cwd = '/tmp/my-project';
     ctx.gitStatus = null;
     // left "my-project" = 10 cells, right "[Opus]" = 6 cells → 16 cells of
-    // content. Width 17 leaves a gap of exactly 1, which is below the >=2
-    // padding threshold, so the plain join must be used.
-    const line = stripAnsi(renderProjectLine(ctx, 17) ?? '');
-    assert.ok(!/[ ]{2,}/.test(line), `gap of 1 must not pad: ${line}`);
+    // content. Width 18 leaves a gap of exactly 2, below the >=3 right-align
+    // threshold, but a plain inline join (16 + 2 for " | ") = 18 still fits,
+    // so the badge stays on the same line without padding.
+    const line = stripAnsi(renderProjectLine(ctx, 18) ?? '');
+    assert.ok(!line.includes('\n'), `should stay one line when join fits: ${line}`);
+    assert.ok(!/[ ]{2,}/.test(line), `should not pad at gap of 2: ${line}`);
+    assert.ok(line.includes('[Opus]'), `badge missing: ${line}`);
   });
 
-  test('pads when gap is exactly 2 (threshold boundary)', () => {
+  test('pads when gap is exactly 3 (threshold boundary)', () => {
     const ctx = baseContext();
     ctx.stdin.cwd = '/tmp/my-project';
     ctx.gitStatus = null;
-    // 10 + 6 = 16 content cells. Width 18 → gap of exactly 2 → pad.
-    const line = stripAnsi(renderProjectLine(ctx, 18) ?? '');
-    assert.equal(line.length, 18, `should fill width at gap boundary: ${line}`);
+    // 10 + 6 = 16 content cells. Width 19 → gap of exactly 3 → pad (gap-1).
+    const line = stripAnsi(renderProjectLine(ctx, 19) ?? '');
+    assert.equal(line.length, 18, `should fill width-1 (margin) at gap boundary: ${line}`);
     assert.ok(line.endsWith('[Opus]'), `badge should be right-aligned: ${line}`);
   });
 
@@ -3292,16 +3300,54 @@ describe('renderProjectLine right-aligned model badge', () => {
     }
   });
 
-  test('padding gap count equals terminalWidth - leftWidth - rightWidth', () => {
+  test('padding gap count equals (terminalWidth - leftWidth - rightWidth - 1)', () => {
     const ctx = baseContext();
     ctx.stdin.cwd = '/tmp/abc';            // left "abc" = 3 cells
     ctx.gitStatus = null;                  // no git → left = "abc"
-    // right "[Opus]" = 6 cells → 3 + 6 = 9. Width 50 → gap = 41 spaces.
+    // right "[Opus]" = 6 cells → 3 + 6 = 9. Width 50 → gap = 41, pad = 40
+    // (one safety-margin cell reserved so the line is terminalWidth - 1).
     const line = stripAnsi(renderProjectLine(ctx, 50) ?? '');
-    assert.equal(line.length, 50, `width mismatch: ${line}`);
+    assert.equal(line.length, 49, `width mismatch (margin reserved): ${line}`);
     const match = line.match(/^(abc)( +)(\[Opus\])$/);
     assert.ok(match, `unexpected layout: ${line}`);
-    assert.equal(match[2].length, 41, `gap should be 41 spaces: ${line}`);
+    assert.equal(match[2].length, 40, `pad should be 40 spaces (gap-1): ${line}`);
+  });
+
+  test('right-aligned line never exceeds terminal width (no truncation)', () => {
+    // Regression guard: a right-aligned line must stay within terminalWidth
+    // so the host renderer never truncates it mid-badge (e.g. `[glm-5.2[`).
+    const ctx = baseContext();
+    ctx.stdin.model = { display_name: 'glm-5.2' };
+    ctx.stdin.cwd = '/Users/me/professional/linzikg/pitpat-server';
+    ctx.gitStatus = { branch: 'feat/push-im-independent-queue', isDirty: true, ahead: 1, behind: 0 };
+    ctx.config.gitStatus.showAheadBehind = true;
+    ctx.sessionDuration = '3h 26m';
+    ctx.config.display.showDuration = true;
+    for (const w of [80, 100, 110, 120, 140]) {
+      const line = stripAnsi(renderProjectLine(ctx, w) ?? '');
+      const lines = line.split('\n');
+      for (const single of lines) {
+        assert.ok(single.length <= w,
+          `line must not exceed width ${w}: got ${single.length} [${single}]`);
+      }
+      // Badge must never appear truncated mid-bracket.
+      assert.ok(!lines.some(l => /\[[a-z0-9.\-]+\[$/.test(l)),
+        `badge truncated mid-bracket at width ${w}: ${lines}`);
+    }
+  });
+
+  test('degradation never truncates the badge even when left is very long', () => {
+    const ctx = baseContext();
+    ctx.stdin.cwd = '/a/very/very/very/long/path/that/exceeds/the/terminal';
+    ctx.gitStatus = { branch: 'short', isDirty: false, ahead: 0, behind: 0 };
+    // Narrow width → degradation; badge must wrap intact, never truncated.
+    const raw = renderProjectLine(ctx, 30) ?? '';
+    const lines = stripAnsi(raw).split('\n');
+    assert.ok(lines.some(l => l.includes('[Opus]')),
+      `badge must render intact on its own line: ${lines}`);
+    for (const l of lines) {
+      assert.ok(!/\[Opus\[$/.test(l), `badge truncated: ${l}`);
+    }
   });
 });
 

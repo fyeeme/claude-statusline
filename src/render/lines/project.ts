@@ -187,28 +187,50 @@ export function renderProjectLine(ctx: RenderContext, terminalWidth: number | nu
   }
 
   const leftContent = parts.join(separator);
+  const widthKnown = typeof terminalWidth === 'number' && terminalWidth > 0;
 
+  // No badge → just the left content.
   if (!rightPart) {
     return leftContent || null;
   }
 
-  // Right-align the model badge segment to the terminal width when the
-  // width is known and there is room. Otherwise fall back to a plain
-  // `left | badge` join so the badge still renders.
-  if (
-    parts.length > 0 &&
-    typeof terminalWidth === 'number' &&
-    terminalWidth > 0
-  ) {
-    const leftWidth = visualLength(leftContent);
-    const rightWidth = visualLength(rightPart);
+  // No left content → badge alone (no padding).
+  if (parts.length === 0) {
+    return rightPart;
+  }
+
+  const leftWidth = visualLength(leftContent);
+  const rightWidth = visualLength(rightPart);
+
+  // Right-align the badge to the terminal width when there is room for a
+  // visible gap. Reserve a small safety margin (1 cell) so that a slightly
+  // inflated width report does not push the badge past the real right
+  // edge and get truncated by the host. The padding fills terminalWidth - 1.
+  if (widthKnown) {
     const gap = terminalWidth - leftWidth - rightWidth;
-    if (gap >= 2) {
-      return `${leftContent}${' '.repeat(gap)}${rightPart}`;
+    if (gap >= 3) {
+      const pad = gap - 1;
+      return `${leftContent}${' '.repeat(pad)}${rightPart}`;
     }
   }
 
-  return parts.length > 0 ? `${leftContent}${separator}${rightPart}` : rightPart;
+  // Degradation: left + right cannot fit side by side with a right-aligned
+  // gap. When the width is unknown we cannot know whether padding would
+  // overflow, so fall back to the plain inline join (left | badge) — this
+  // is the historical behavior and stays correct when content is short.
+  // When the width IS known but the line would overflow, the badge is put
+  // on its own line (via embedded newline) so the outer wrap step never
+  // truncates it mid-bracket (e.g. `[glm-5.2[`).
+  if (!widthKnown) {
+    return `${leftContent}${separator}${rightPart}`;
+  }
+
+  // Width known and gap < 3: if a plain join still fits, use it; otherwise
+  // wrap the badge to its own line to avoid truncation.
+  if (leftWidth + rightWidth + 2 <= terminalWidth) {
+    return `${leftContent}${separator}${rightPart}`;
+  }
+  return `${leftContent}\n${rightPart}`;
 }
 
 function formatAheadCount(
