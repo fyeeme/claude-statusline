@@ -223,7 +223,7 @@ export const DEFAULT_CONFIG: HudConfig = {
     showTodos: false,
     showSessionName: false,
     showClaudeCodeVersion: false,
-    showEffortLevel: false,
+    showEffortLevel: true,
     showMemoryUsage: false,
     showPromptCache: false,
     promptCacheTtlSeconds: 300,

@@ -11,6 +11,7 @@ import { renderAdvisorLine } from './advisor.js';
 import { normalizeAddedDirs, basenameOf, truncateBasename, MAX_RENDERED_ADDED_DIRS } from './added-dirs.js';
 import { sanitize as sanitizeDisplayText } from '../sanitize.js';
 import { safeHyperlink } from '../hyperlink.js';
+import { visualLength } from '../measure.js';
 
 function getFileHref(filePath: string): string | null {
   try {
@@ -30,7 +31,7 @@ function resolvePathWithinCwd(cwd: string, candidatePath: string): string | null
   return null;
 }
 
-export function renderProjectLine(ctx: RenderContext): string | null {
+export function renderProjectLine(ctx: RenderContext, terminalWidth: number | null = null): string | null {
   const display = ctx.config?.display;
   const colors = ctx.config?.colors;
   const separator = display?.separator ?? ' | ';
@@ -177,20 +178,48 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     }
   }
 
-  // Model badge + effort segment sits last (right side of the line).
-  if (modelPart) {
-    parts.push(modelPart);
-  }
-
+  // Model badge + effort segment is right-aligned to terminalWidth
+  // (two-ended alignment) when the width is known and there is room.
+  // It is NOT pushed into `parts` so it can be padded separately.
   if (customLine && customLinePosition === 'last') {
     parts.push(customColor(customLine, colors));
   }
 
-  if (parts.length === 0) {
+  if (parts.length === 0 && !modelPart) {
     return null;
   }
 
-  return parts.join(separator);
+  const leftContent = parts.join(separator);
+
+  // No badge → just the left content.
+  if (!modelPart) {
+    return leftContent || null;
+  }
+
+  // No left content → badge alone (no padding).
+  if (parts.length === 0) {
+    return modelPart;
+  }
+
+  const widthKnown = typeof terminalWidth === 'number' && terminalWidth > 0;
+
+  // Right-align the badge to the terminal width when there is room for a
+  // visible gap. The padding fills the line so the badge sits flush right
+  // (two-ended alignment). A 1-cell safety margin is reserved so a slightly
+  // inflated width report does not push the badge past the real right edge.
+  if (widthKnown) {
+    const leftWidth = visualLength(leftContent);
+    const rightWidth = visualLength(modelPart);
+    const gap = terminalWidth - leftWidth - rightWidth;
+    if (gap >= 3) {
+      const pad = gap - 1;
+      return `${leftContent}${' '.repeat(pad)}${modelPart}`;
+    }
+  }
+
+  // Degradation: width unknown, or too narrow to right-align. Keep the
+  // badge inline (joined with the separator) so it still renders.
+  return `${leftContent}${separator}${modelPart}`;
 }
 
 function formatAheadCount(

@@ -3212,6 +3212,58 @@ describe('renderProjectLine badge placement', () => {
     ctx.gitStatus = null;
     assert.equal(renderProjectLine(ctx), null);
   });
+
+  test('right-aligns the badge to terminalWidth (two-ended alignment) when there is room', () => {
+    const ctx = baseContext();
+    ctx.stdin.cwd = '/tmp/my-project';
+    ctx.gitStatus = { branch: 'main', isDirty: false, ahead: 0, behind: 0 };
+    const line = stripAnsi(renderProjectLine(ctx, 60) ?? '');
+    const projectIdx = line.indexOf('my-project');
+    const badgeIdx = line.indexOf('[Opus]');
+    assert.ok(projectIdx >= 0 && badgeIdx >= 0, `segments missing: ${line}`);
+    assert.ok(projectIdx < badgeIdx, `project should precede badge: ${line}`);
+    // Padded gap (>= 2 spaces) separates them → two-ended alignment.
+    assert.ok(/[ ]{2,}/.test(line), `expected padding gap, got: ${line}`);
+    // 1-cell safety margin: line fills terminalWidth - 1.
+    assert.equal(line.length, 59, `line should fill width-1 (margin): ${line}`);
+    assert.ok(line.endsWith('[Opus]'), `badge should be flush right: ${line}`);
+  });
+
+  test('degrades to inline join when terminalWidth is unknown', () => {
+    const ctx = baseContext();
+    ctx.stdin.cwd = '/tmp/my-project';
+    ctx.gitStatus = { branch: 'main', isDirty: false, ahead: 0, behind: 0 };
+    const line = stripAnsi(renderProjectLine(ctx) ?? '');
+    assert.ok(!line.includes('\n'), `unknown width should stay one line: ${line}`);
+    assert.ok(!/[ ]{2,}/.test(line), `should not pad when width unknown: ${line}`);
+    assert.ok(line.endsWith('[Opus]'), `badge should still render: ${line}`);
+  });
+
+  test('degrades to inline join when terminalWidth is too narrow for a gap', () => {
+    const ctx = baseContext();
+    ctx.stdin.cwd = '/tmp/my-project';
+    ctx.gitStatus = { branch: 'very-long-branch-name-here', isDirty: false, ahead: 0, behind: 0 };
+    const line = stripAnsi(renderProjectLine(ctx, 10) ?? '');
+    assert.ok(!/[ ]{2,}/.test(line), `should not pad when too narrow: ${line}`);
+    assert.ok(line.includes('[Opus]'), `badge should still render: ${line}`);
+  });
+
+  test('right-aligned line never exceeds terminalWidth (no truncation)', () => {
+    const ctx = baseContext();
+    ctx.stdin.model = { display_name: 'glm-5.2' };
+    ctx.stdin.cwd = '/Users/me/professional/linzikg/pitpat-server';
+    ctx.gitStatus = { branch: 'feat/push-im-independent-queue', isDirty: true, ahead: 1, behind: 0 };
+    ctx.config.gitStatus.showAheadBehind = true;
+    ctx.effortLevel = 'medium';
+    ctx.effortSymbol = '◔';
+    for (const w of [80, 100, 110, 120]) {
+      const line = stripAnsi(renderProjectLine(ctx, w) ?? '');
+      assert.ok(line.length <= w,
+        `line must not exceed width ${w}: got ${line.length} [${line}]`);
+      assert.ok(!/\[[a-z0-9.\-]+\[$/.test(line),
+        `badge truncated mid-bracket at width ${w}: ${line}`);
+    }
+  });
 });
 
 describe('config.terminalWidth drives width-adaptive rendering', () => {

@@ -314,7 +314,7 @@ function renderElementLine(
 
   switch (element) {
     case 'project':
-      return renderProjectLine(ctx);
+      return renderProjectLine(ctx, options?.terminalWidth);
     case 'addedDirs':
       return renderAddedDirsLine(ctx);
     case 'context':
