@@ -2,7 +2,6 @@
  * GLM API client — pure fetch logic, no caching or calibration.
  *
  * Exported functions:
- *  - fetchQuota(baseDomain, headers)        → QuotaData
  *  - fetchFull(baseDomain, headers, cycleStart?) → FetchedData
  *  - getGlmHeaders()                         → headers | null
  *  - extractTotalTokens(data)                → number
@@ -10,7 +9,7 @@
  *  - fetchWithTimeout(url, headers)          → Response
  */
 
-import type { FetchedData, QuotaData } from './types.js';
+import type { FetchedData } from './types.js';
 import { GlmAuthError, GlmRetryableError } from './types.js';
 
 // ---- Constants ----
@@ -134,7 +133,7 @@ function classifyStatus(status: number): never {
   throw new GlmRetryableError(`Unexpected status: ${status}`);
 }
 
-// ---- Quota parsing (shared between fetchQuota and fetchFull) ----
+// ---- Quota parsing (used by fetchFull) ----
 
 function parseQuotaResponse(quotaRes: Response): Promise<{
   fiveHourPct: number | null;
@@ -187,28 +186,6 @@ function parseQuotaResponse(quotaRes: Response): Promise<{
 }
 
 // ---- Public API ----
-
-/**
- * Lightweight fetch: quota endpoint only (1 HTTP request).
- * Used for 5h-only refreshes.
- */
-export async function fetchQuota(
-  baseDomain: string,
-  headers: Record<string, string>,
-): Promise<QuotaData> {
-  const quotaUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
-  const quotaRes = await fetchWithTimeout(quotaUrl, headers);
-
-  if (quotaRes.status === 401 || quotaRes.status === 403) {
-    throw new GlmAuthError(`Auth failed: ${quotaRes.status}`);
-  }
-  if (quotaRes.status === 429 || quotaRes.status >= 500) {
-    throw new GlmRetryableError(`Server/rate-limit error: ${quotaRes.status}`);
-  }
-
-  const parsed = await parseQuotaResponse(quotaRes);
-  return parsed;
-}
 
 /**
  * Full fetch: quota + model-usage (two-phase parallel + serial).

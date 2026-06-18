@@ -206,8 +206,7 @@ GLM/DeepSeek 用户会额外看到用量窗口与账户余额。
 ### 用量（5h / 7d / 余额）不显示
 
 1. 确认 `ANTHROPIC_BASE_URL` 指向 GLM 或 DeepSeek 域名
-2. 确认 `ANTHROPIC_AUTH_TOKEN` 有效
-3. 清缓存重试：`rm -f ~/.claude/plugins/claude-statusline/.usage-cache.json`
+2. 确认 `ANTHROPIC_AUTH_TOKEN` 有效（GLM/DeepSeek 每次刷新直接请求 API，无本地缓存）
 
 ### Linux 安装报 `EXDEV` 错误
 

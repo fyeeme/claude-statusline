@@ -171,12 +171,6 @@ export interface HudConfig {
     separator: string;
   };
   colors: HudColorOverrides;
-  usage: {
-    /** Cache TTL for 5h usage data in seconds (default: 30) */
-    fiveHourRefreshSec: number;
-    /** Cache TTL for 7d usage data in seconds (default: 180) */
-    sevenDayRefreshSec: number;
-  };
 }
 
 export const DEFAULT_CONFIG: HudConfig = {
@@ -251,10 +245,6 @@ export const DEFAULT_CONFIG: HudConfig = {
     advisorOverride: '',
     autoCompactWindow: null,
     separator: ' | ',
-  },
-  usage: {
-    fiveHourRefreshSec: 30,
-    sevenDayRefreshSec: 180,
   },
   colors: {
     context: 'none',
@@ -760,24 +750,7 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
       : DEFAULT_CONFIG.colors.barEmpty,
   };
 
-  const usage = {
-    fiveHourRefreshSec: typeof (migrated as Record<string, unknown>).usage === 'object'
-      ? Number(((migrated as Record<string, unknown>).usage as Record<string, unknown>).fiveHourRefreshSec)
-      : NaN,
-    sevenDayRefreshSec: typeof (migrated as Record<string, unknown>).usage === 'object'
-      ? Number(((migrated as Record<string, unknown>).usage as Record<string, unknown>).sevenDayRefreshSec)
-      : NaN,
-  };
-  const usageFinal = {
-    fiveHourRefreshSec: Number.isFinite(usage.fiveHourRefreshSec) && usage.fiveHourRefreshSec > 0
-      ? usage.fiveHourRefreshSec
-      : DEFAULT_CONFIG.usage.fiveHourRefreshSec,
-    sevenDayRefreshSec: Number.isFinite(usage.sevenDayRefreshSec) && usage.sevenDayRefreshSec > 0
-      ? usage.sevenDayRefreshSec
-      : DEFAULT_CONFIG.usage.sevenDayRefreshSec,
-  };
-
-  return { language, lineLayout, showSeparators, pathLevels, terminalWidth, maxWidth, forceMaxWidth, elementOrder, gitStatus, display, colors, usage: usageFinal };
+  return { language, lineLayout, showSeparators, pathLevels, terminalWidth, maxWidth, forceMaxWidth, elementOrder, gitStatus, display, colors };
 }
 
 export async function loadConfig(): Promise<HudConfig> {

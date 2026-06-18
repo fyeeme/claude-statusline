@@ -63,7 +63,6 @@
 
 **新增项**
 - `display.separator`（默认 `' | '`，半角带空格）—— 取代上游各处硬编码的分隔符
-- `usage.fiveHourRefreshSec`（30）/ `usage.sevenDayRefreshSec`（180）—— GLM 缓存 TTL
 - `terminalWidth`（默认 `null`）—— **权威终端宽度**。statusline 子进程无法检测真实终端尺寸（`stdout.columns`/`COLUMNS` 不可用），设此字段为唯一可靠宽度源，驱动 wrap 与布局。优先级高于 detected width / `maxWidth`（仅 `forceMaxWidth` 能覆盖）。详见 E8
 - `colors.*` 全量可配（上游已有部分；fork 补齐 model/project/git/gitBranch/custom/barFilled/barEmpty）
 

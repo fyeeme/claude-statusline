@@ -1,6 +1,4 @@
-import type { UsagePlatform, UsageWindowType } from '../../types.js';
-
-/** Persistent calibration state — survives cache TTL, stored in .usage-state.json */
+/** Persistent calibration state — stored in .usage-state.json */
 export interface CalibrationState {
   calibratedLimit7d: number | null;
   calibratedAt: number;
@@ -17,33 +15,6 @@ export interface FetchedData {
   timeLimitResetTime: number | null;
   weeklyPct: number | null;
   weeklyResetTime: number | null;
-}
-
-/** Result from lightweight quota-only fetch */
-export interface QuotaData {
-  fiveHourPct: number | null;
-  tokensLimitResetTime: number | null;
-  timeLimitResetTime: number | null;
-  weeklyPct: number | null;
-  weeklyResetTime: number | null;
-}
-
-/** Transient cached usage data — TTL-controlled, stored in .usage-cache.json */
-export interface CachedUsage {
-  platform: UsagePlatform;
-  fiveHour: number | null;
-  sevenDay: number | null;
-  sevenDayTokens: number | undefined;
-  fiveHourFetchedAt: number;
-  fiveHourStartAt: number | null;
-  fiveHourResetAt: number | null;
-  sevenDayStartAt: number | null;
-  sevenDayResetAt: number | null;
-  timestamp: number;
-  ttlMs: number;
-  isError: boolean;
-  fiveHourWindowType: UsageWindowType;
-  sevenDayWindowType: UsageWindowType;
 }
 
 /** Auth failure (401/403) — cannot retry without new credentials */

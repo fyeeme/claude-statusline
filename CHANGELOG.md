@@ -19,7 +19,7 @@ All notable changes to Claude Statusline will be documented in this file.
 - **DeepSeek provider**: account balance, natural-week tokens, provider-maintained pricing with session cost estimate (CNY balance converts USD cost at ×7).
 - `getUsage` platform router in `src/index.ts` (anthropic/glm/deepseek auto-detected via `ANTHROPIC_BASE_URL`).
 - Cache hit rate in session tokens line (`cache: <total>, <rate>%`; rate = cacheRead / effective input).
-- Configurable `display.separator` (default ` | `) and `usage.{fiveHourRefreshSec,sevenDayRefreshSec}`.
+- Configurable `display.separator` (default ` | `).
 
 ### Changed — UI defaults (fork repositioning)
 - Color: context/usage default to `dim` (grey) below threshold; warning at ≥65, critical at ≥85 (upstream was green/blue, 70/75/90).
