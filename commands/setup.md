@@ -240,7 +240,7 @@ Instead, use `sort -V` (GNU version sort, included with Git for Windows) which a
 
    const envColumns = Number.parseInt(process.env.COLUMNS ?? '', 10);
    const width = Number.isFinite(envColumns) && envColumns > 0 ? envColumns : 120;
-   process.env.COLUMNS = String(Math.max(1, width - 4));
+   process.env.COLUMNS = String(Math.max(1, width - 2));
 
    const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
    const cacheDir = path.join(claudeDir, 'plugins', 'cache');
@@ -306,7 +306,7 @@ Instead, use `sort -V` (GNU version sort, included with Git for Windows) which a
 
    const envColumns = Number.parseInt(process.env.COLUMNS ?? '', 10);
    const width = Number.isFinite(envColumns) && envColumns > 0 ? envColumns : 120;
-   process.env.COLUMNS = String(Math.max(1, width - 4));
+   process.env.COLUMNS = String(Math.max(1, width - 2));
 
    const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
    const cacheDir = path.join(claudeDir, 'plugins', 'cache');
