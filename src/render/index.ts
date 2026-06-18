@@ -353,12 +353,17 @@ function renderCompact(ctx: RenderContext): string[] {
   return lines;
 }
 
-function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null): Array<{ line: string; isActivity: boolean }> {
+type RenderedLine = { line: string; isActivity: boolean; element?: HudElement };
+// Shared by merge-group join and the sessionTokens row append so both stay
+// splittable by wrapLineToWidth on narrow terminals.
+const MERGE_SEPARATOR = ' | ';
+
+function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null): RenderedLine[] {
   const elementOrder = ctx.config?.elementOrder ?? DEFAULT_ELEMENT_ORDER;
   const mergeGroups = ctx.config?.display?.mergeGroups ?? DEFAULT_MERGE_GROUPS;
   const mergeGroupLookup = buildMergeGroupLookup(mergeGroups);
   const seen = new Set<HudElement>();
-  const lines: Array<{ line: string; isActivity: boolean }> = [];
+  const lines: RenderedLine[] = [];
 
   for (let index = 0; index < elementOrder.length; index += 1) {
     const element = elementOrder[index];
@@ -387,14 +392,17 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
           );
 
         if (renderedGroupLines.length > 1) {
-          const combinedLine = renderedGroupLines.map(({ line }) => line).join(' | ');
+          const combinedLine = renderedGroupLines.map(({ line }) => line).join(MERGE_SEPARATOR);
           const widthIsReal = terminalWidth !== UNKNOWN_TERMINAL_WIDTH;
           const canCombine = !widthIsReal || visualLength(combinedLine) <= terminalWidth;
+          // Promote 'context' so a ['usage','context'] merge is still locatable.
+          const mergedElement = mergeSequence.includes('context') ? 'context' : mergeSequence[0];
 
           if (canCombine) {
             lines.push({
               line: combinedLine,
               isActivity: renderedGroupLines.some(({ element: groupedElement }) => ACTIVITY_ELEMENTS.has(groupedElement)),
+              element: mergedElement,
             });
           } else {
             for (const { element: groupedElement, line } of renderedGroupLines) {
@@ -404,6 +412,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
               lines.push({
                 line: stackedLine,
                 isActivity: ACTIVITY_ELEMENTS.has(groupedElement),
+                element: groupedElement,
               });
             }
           }
@@ -412,6 +421,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
           lines.push({
             line,
             isActivity: ACTIVITY_ELEMENTS.has(groupedElement),
+            element: groupedElement,
           });
         }
 
@@ -429,6 +439,7 @@ function renderExpanded(ctx: RenderContext, terminalWidth: number | null = null)
     lines.push({
       line,
       isActivity: ACTIVITY_ELEMENTS.has(element),
+      element,
     });
   }
 
@@ -469,11 +480,17 @@ export function render(ctx: RenderContext): void {
     const renderedLines = renderExpanded(ctx, terminalWidth);
     lines = renderedLines.map(({ line }) => line);
 
-    // Session token usage (cumulative)
+    // Session tokens append to the context row tail; fall back to a standalone
+    // line when the layout has no context row.
     if (ctx.config?.display?.showSessionTokens) {
       const sessionTokensLine = renderSessionTokensLine(ctx);
       if (sessionTokensLine) {
-        lines.push(sessionTokensLine);
+        const contextIdx = renderedLines.findIndex((r) => r.element === 'context');
+        if (contextIdx >= 0) {
+          lines[contextIdx] = `${lines[contextIdx]}${MERGE_SEPARATOR}${sessionTokensLine}`;
+        } else {
+          lines.push(sessionTokensLine);
+        }
       }
     }
 
@@ -488,10 +505,13 @@ export function render(ctx: RenderContext): void {
     if (showSeparators) {
       const firstActivityIndex = renderedLines.findIndex(({ isActivity }) => isActivity);
       if (firstActivityIndex > 0) {
+        // Measure the post-append `lines`, not `renderedLines`: when sessionTokens
+        // are appended to the context row tail, that row grows and must set the
+        // separator width or the rule ends up shorter than the header above it.
         const separatorBaseWidth = Math.max(
-          ...renderedLines
+          ...lines
             .slice(0, firstActivityIndex)
-            .map(({ line }) => visualLength(line)),
+            .map((line) => visualLength(line)),
           20
         );
         const separatorWidth = terminalWidth

@@ -2716,12 +2716,7 @@ test('renderSessionTokensLine returns null when session token display is disable
 test('renderSessionTokensLine renders cumulative session token totals', () => {
   const ctx = baseContext();
   ctx.config.display.showSessionTokens = true;
-  ctx.transcript.sessionTokens = {
-    inputTokens: 7000,
-    outputTokens: 28000,
-    cacheCreationTokens: 12800000,
-    cacheReadTokens: 0,
-  };
+  ctx.transcript.sessionTokens = TOKENS_LARGE;
 
   const line = stripAnsi(renderSessionTokensLine(ctx) ?? '');
   assert.equal(line, 'Tokens 12.8M (in: 7k, out: 28k, cache: 12.8M, 0%)');
@@ -2761,6 +2756,83 @@ test('renderSessionLine translates compact session token summary when Chinese is
   } finally {
     setLanguage('en');
   }
+});
+
+// ---------------------------------------------------------------------------
+// expanded layout — sessionTokens inlined onto the context line tail
+// (compact mode keeps the inline `tok:` summary inside the session line)
+// ---------------------------------------------------------------------------
+
+const TOKENS_LARGE = { inputTokens: 7000, outputTokens: 28000, cacheCreationTokens: 12800000, cacheReadTokens: 0 };
+
+test('render expanded layout appends sessionTokens to the context line', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.display.showSessionTokens = true;
+  ctx.transcript.sessionTokens = TOKENS_LARGE;
+
+  const lines = withTerminal(160, () => captureRenderLines(ctx));
+  const mergedLine = lines.find((l) => l.includes('Context') && l.includes('Tokens'));
+  assert.ok(mergedLine, 'sessionTokens should share a physical line with Context');
+  assert.ok(mergedLine.includes('| Tokens'), 'Tokens should be appended after " | " at the line tail');
+  assert.equal(lines.filter((l) => l.startsWith('Tokens')).length, 0, 'no standalone Tokens line');
+});
+
+test('render expanded layout keeps sessionTokens on the context line with custom elementOrder', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.display.showSessionTokens = true;
+  ctx.config.elementOrder = ['usage', 'context'];
+  ctx.transcript.sessionTokens = TOKENS_LARGE;
+
+  const lines = withTerminal(160, () => captureRenderLines(ctx));
+  const mergedLine = lines.find((l) => l.includes('Tokens'));
+  assert.ok(mergedLine && mergedLine.includes('Context'), 'Tokens stays on the context line even when usage precedes context');
+  assert.equal(lines.filter((l) => l.startsWith('Tokens')).length, 0, 'no standalone Tokens line');
+});
+
+test('render expanded layout falls back to a standalone sessionTokens line when context is absent', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.display.showSessionTokens = true;
+  ctx.config.elementOrder = ['project'];
+  ctx.transcript.sessionTokens = TOKENS_LARGE;
+
+  const lines = withTerminal(160, () => captureRenderLines(ctx));
+  assert.ok(lines.some((l) => l.includes('Tokens')), 'standalone Tokens line exists as fallback');
+  const projectLine = lines.find((l) => l.includes('Opus'));
+  assert.ok(projectLine, 'project/model line exists');
+  assert.ok(!projectLine.includes('Tokens'), 'Tokens must not be appended to the project line');
+});
+
+test('render compact layout keeps sessionTokens inline in the session line', () => {
+  const ctx = baseContext();
+  ctx.config.display.showSessionTokens = true;
+  ctx.transcript.sessionTokens = {
+    inputTokens: 1500,
+    outputTokens: 250,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+  };
+
+  const lines = withTerminal(160, () => captureRenderLines(ctx));
+  assert.ok(lines.some((l) => l.includes('tok:')), 'compact session line keeps the tok: summary');
+  assert.equal(lines.filter((l) => l.startsWith('Tokens')).length, 0, 'no standalone Tokens line in compact mode');
+});
+
+test('render expanded layout wraps sessionTokens without truncating the token breakdown when narrow', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.display.showSessionTokens = true;
+  ctx.transcript.sessionTokens = TOKENS_LARGE;
+
+  // Width forces the combined context+tokens row to wrap at the ' | ' seam,
+  // yet leaves room for the full 'Tokens ... (cache: ..., 0%)' segment on its
+  // own wrapped line — so the breakdown is wrapped, not ellipsis-truncated.
+  const lines = withTerminal(70, () => captureRenderLines(ctx));
+  const allText = lines.join('\n');
+  assert.ok(allText.includes('Context'), 'Context still rendered when narrow');
+  assert.ok(allText.includes('0%)'), 'full token breakdown (cache + hit rate) survives wrapping, not truncated');
 });
 
 // ---------------------------------------------------------------------------
