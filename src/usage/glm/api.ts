@@ -2,14 +2,16 @@
  * GLM API client — pure fetch logic, no caching or calibration.
  *
  * Exported functions:
- *  - fetchFull(baseDomain, headers, cycleStart?) → FetchedData
- *  - getGlmHeaders()                         → headers | null
- *  - extractTotalTokens(data)                → number
- *  - formatTimestamp(d)                      → string
- *  - fetchWithTimeout(url, headers)          → Response
+ *  - fetchQuotaOnly(baseDomain, headers)         → QuotaInfo
+ *  - fetchModelUsage(baseDomain, headers, s, e)  → number (totalTokens)
+ *  - fetch5hTokens(baseDomain, headers, resetMs) → number
+ *  - getGlmHeaders()                             → headers | null
+ *  - extractTotalTokens(data)                    → number
+ *  - formatTimestamp(d)                          → string
+ *  - formatTokenCount(n)                         → string
+ *  - fetchWithTimeout(url, headers)              → Response
  */
 
-import type { FetchedData } from './types.js';
 import { GlmAuthError, GlmRetryableError } from './types.js';
 
 // ---- Constants ----
@@ -46,6 +48,19 @@ export interface ModelUsageResponse {
     totalUsage?: ModelUsageTotalUsage;
     modelSummaryList?: { modelName: string; totalTokens: number }[];
   } | ModelUsageEntry[];
+}
+
+/** Quota-only result (no token aggregation). */
+export interface QuotaInfo {
+  fiveHourPct: number | null;
+  tokensLimitResetTime: number | null;
+  timeLimitResetTime: number | null;
+  weeklyPct: number | null;
+  weeklyResetTime: number | null;
+  /** True when a `unit:6` TOKENS_LIMIT entry exists (regardless of whether
+   *  its fields parsed). When true, path A owns the result even if fields
+   *  are missing (returns null rather than falling back to path B). */
+  hasUnit6: boolean;
 }
 
 // ---- Helpers ----
@@ -121,144 +136,117 @@ export function getGlmHeaders(): Record<string, string> | null {
   };
 }
 
-// ---- Error classification ----
-
-function classifyStatus(status: number): never {
-  if (status === 401 || status === 403) {
-    throw new GlmAuthError(`Auth failed: ${status}`);
-  }
-  if (status === 429 || status >= 500) {
-    throw new GlmRetryableError(`Server/rate-limit error: ${status}`);
-  }
-  throw new GlmRetryableError(`Unexpected status: ${status}`);
-}
-
-// ---- Quota parsing (used by fetchFull) ----
-
-function parseQuotaResponse(quotaRes: Response): Promise<{
-  fiveHourPct: number | null;
-  tokensLimitResetTime: number | null;
-  timeLimitResetTime: number | null;
-  weeklyPct: number | null;
-  weeklyResetTime: number | null;
-}> {
-  return quotaRes.json().then((quotaJson: QuotaResponse) => {
-    let fiveHourPct: number | null = null;
-    let tokensLimitResetTime: number | null = null;
-    let timeLimitResetTime: number | null = null;
-    let weeklyPct: number | null = null;
-    let weeklyResetTime: number | null = null;
-
-    const limits = quotaJson?.data?.limits;
-    if (Array.isArray(limits)) {
-      // unit:3 = 5-hour rolling, unit:6 = weekly. Fallback to first TOKENS_LIMIT when unit absent.
-      const fiveHourLimit = limits.find((l) => l.type === 'TOKENS_LIMIT' && l.unit === 3)
-        ?? limits.find((l) => l.type === 'TOKENS_LIMIT');
-      const weeklyLimit = limits.find((l) => l.type === 'TOKENS_LIMIT' && l.unit === 6);
-      if (fiveHourLimit && typeof fiveHourLimit.percentage === 'number' && Number.isFinite(fiveHourLimit.percentage)) {
-        fiveHourPct = clamp(Math.round(fiveHourLimit.percentage), 0, 100);
-      }
-      if (fiveHourLimit && typeof fiveHourLimit.nextResetTime === 'number' && Number.isFinite(fiveHourLimit.nextResetTime)) {
-        tokensLimitResetTime = fiveHourLimit.nextResetTime;
-      }
-      if (weeklyLimit) {
-        if (typeof weeklyLimit.percentage === 'number' && Number.isFinite(weeklyLimit.percentage)) {
-          weeklyPct = clamp(Math.round(weeklyLimit.percentage), 0, 100);
-        }
-        if (typeof weeklyLimit.nextResetTime === 'number' && Number.isFinite(weeklyLimit.nextResetTime)) {
-          weeklyResetTime = weeklyLimit.nextResetTime;
-        }
-      }
-      const timeLimit = limits.find((l) => l.type === 'TIME_LIMIT');
-      if (timeLimit && typeof timeLimit.nextResetTime === 'number' && Number.isFinite(timeLimit.nextResetTime)) {
-        timeLimitResetTime = timeLimit.nextResetTime;
-      }
-    }
-
-    return { fiveHourPct, tokensLimitResetTime, timeLimitResetTime, weeklyPct, weeklyResetTime };
-  }).catch(() => ({
-    fiveHourPct: null as number | null,
-    tokensLimitResetTime: null as number | null,
-    timeLimitResetTime: null as number | null,
-    weeklyPct: null as number | null,
-    weeklyResetTime: null as number | null,
-  }));
-}
-
-// ---- Public API ----
+// ---- Public: quota-only fetch ----
 
 /**
- * Full fetch: quota + model-usage (two-phase parallel + serial).
- *
- * Phase 1 — parallel: quota endpoint + 7d model-usage (cycleStart → now).
- * Phase 2 — serial:   exact 5h model-usage (nextResetTime - 5h → now).
- *
- * When cycleStart is null, uses now-7d as fallback for the 7d query range.
+ * Fetch only the quota/limit endpoint. Returns parsed limit fields.
+ * Throws GlmAuthError on 401/403, GlmRetryableError on 429/5xx.
  */
-export async function fetchFull(
+export async function fetchQuotaOnly(
   baseDomain: string,
   headers: Record<string, string>,
-  cycleStart?: number,
-): Promise<FetchedData> {
-  const now = new Date();
-  const start7d = cycleStart != null
-    ? new Date(cycleStart)
-    : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-  // Phase 1: quota + 7d usage in parallel
+): Promise<QuotaInfo> {
   const quotaUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
-  const usage7dUrl = `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(start7d))}&endTime=${encodeURIComponent(formatTimestamp(now))}`;
+  const res = await fetchWithTimeout(quotaUrl, headers);
 
-  const [quotaRes, usage7dRes] = await Promise.all([
-    fetchWithTimeout(quotaUrl, headers),
-    fetchWithTimeout(usage7dUrl, headers),
-  ]);
-
-  // Check for auth / server errors on quota response
-  if (quotaRes.status === 401 || quotaRes.status === 403) {
-    throw new GlmAuthError(`Auth failed: ${quotaRes.status}`);
+  if (res.status === 401 || res.status === 403) {
+    throw new GlmAuthError(`Auth failed: ${res.status}`);
   }
-  if (quotaRes.status === 429 || quotaRes.status >= 500) {
-    throw new GlmRetryableError(`Server/rate-limit error: ${quotaRes.status}`);
+  if (res.status === 429 || res.status >= 500) {
+    throw new GlmRetryableError(`Server/rate-limit error: ${res.status}`);
   }
 
-  // Parse quota response
-  const { fiveHourPct, tokensLimitResetTime, timeLimitResetTime, weeklyPct, weeklyResetTime } = await parseQuotaResponse(quotaRes);
-
-  // Phase 2: fetch exact 5h window using TOKENS_LIMIT.nextResetTime
-  let tokens5h = 0;
-  if (tokensLimitResetTime != null) {
-    const windowStart = new Date(tokensLimitResetTime - FIVE_HOUR_MS);
-    const usage5hUrl = `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(windowStart))}&endTime=${encodeURIComponent(formatTimestamp(now))}`;
-    try {
-      const usage5hRes = await fetchWithTimeout(usage5hUrl, headers);
-      if (usage5hRes.ok) {
-        const usageJson: ModelUsageResponse = await usage5hRes.json();
-        tokens5h = extractTotalTokens(usageJson?.data);
-      }
-    } catch {
-      // Defensive parsing
-    }
-  }
-
-  // Parse 7d usage
-  let tokens7d = 0;
   try {
-    if (usage7dRes.ok) {
-      const usageJson: ModelUsageResponse = await usage7dRes.json();
-      tokens7d = extractTotalTokens(usageJson?.data);
-    }
+    const quotaJson: QuotaResponse = await res.json();
+    return parseQuotaLimits(quotaJson);
   } catch {
-    // Defensive parsing
+    return {
+      fiveHourPct: null,
+      tokensLimitResetTime: null,
+      timeLimitResetTime: null,
+      weeklyPct: null,
+      weeklyResetTime: null,
+      hasUnit6: false,
+    };
+  }
+}
+
+/** Parse the quota limits array into QuotaInfo. */
+function parseQuotaLimits(quotaJson: QuotaResponse): QuotaInfo {
+  let fiveHourPct: number | null = null;
+  let tokensLimitResetTime: number | null = null;
+  let timeLimitResetTime: number | null = null;
+  let weeklyPct: number | null = null;
+  let weeklyResetTime: number | null = null;
+  let hasUnit6 = false;
+
+  const limits = quotaJson?.data?.limits;
+  if (Array.isArray(limits)) {
+    // unit:3 = 5-hour rolling, unit:6 = weekly. Fallback to first TOKENS_LIMIT when unit absent.
+    const fiveHourLimit = limits.find((l) => l.type === 'TOKENS_LIMIT' && l.unit === 3)
+      ?? limits.find((l) => l.type === 'TOKENS_LIMIT');
+    const weeklyLimit = limits.find((l) => l.type === 'TOKENS_LIMIT' && l.unit === 6);
+    hasUnit6 = weeklyLimit != null;
+    if (fiveHourLimit && typeof fiveHourLimit.percentage === 'number' && Number.isFinite(fiveHourLimit.percentage)) {
+      fiveHourPct = clamp(Math.round(fiveHourLimit.percentage), 0, 100);
+    }
+    if (fiveHourLimit && typeof fiveHourLimit.nextResetTime === 'number' && Number.isFinite(fiveHourLimit.nextResetTime)) {
+      tokensLimitResetTime = fiveHourLimit.nextResetTime;
+    }
+    if (weeklyLimit) {
+      if (typeof weeklyLimit.percentage === 'number' && Number.isFinite(weeklyLimit.percentage)) {
+        weeklyPct = clamp(Math.round(weeklyLimit.percentage), 0, 100);
+      }
+      if (typeof weeklyLimit.nextResetTime === 'number' && Number.isFinite(weeklyLimit.nextResetTime)) {
+        weeklyResetTime = weeklyLimit.nextResetTime;
+      }
+    }
+    const timeLimit = limits.find((l) => l.type === 'TIME_LIMIT');
+    if (timeLimit && typeof timeLimit.nextResetTime === 'number' && Number.isFinite(timeLimit.nextResetTime)) {
+      timeLimitResetTime = timeLimit.nextResetTime;
+    }
   }
 
-  return {
-    fiveHourPct,
-    tokens5h,
-    tokens7d,
-    tokensLimitResetTime,
-    timeLimitResetTime,
-    weeklyPct,
-    weeklyResetTime,
-  };
+  return { fiveHourPct, tokensLimitResetTime, timeLimitResetTime, weeklyPct, weeklyResetTime, hasUnit6 };
+}
+
+// ---- Public: model-usage window fetch ----
+
+/**
+ * Query model-usage totalTokens over an arbitrary [startMs, endMs] window.
+ * Returns 0 on any failure — never throws (paths rely on graceful fallback).
+ */
+export async function fetchModelUsage(
+  baseDomain: string,
+  headers: Record<string, string>,
+  startMs: number,
+  endMs: number,
+): Promise<number> {
+  const start = new Date(startMs);
+  const end = new Date(endMs);
+  const url = `${baseDomain}/api/monitor/usage/model-usage?startTime=${encodeURIComponent(formatTimestamp(start))}&endTime=${encodeURIComponent(formatTimestamp(end))}`;
+  try {
+    const res = await fetchWithTimeout(url, headers);
+    if (!res.ok) return 0;
+    const json: ModelUsageResponse = await res.json();
+    return extractTotalTokens(json?.data);
+  } catch {
+    return 0;
+  }
+}
+
+// ---- Public: 5h tokens fetch (shared by both weekly paths) ----
+
+/**
+ * Fetch exact 5h-window token usage using TOKENS_LIMIT.nextResetTime.
+ * Returns 0 when resetTime is null or the request fails.
+ */
+export async function fetch5hTokens(
+  baseDomain: string,
+  headers: Record<string, string>,
+  tokensLimitResetTime: number | null,
+): Promise<number> {
+  if (tokensLimitResetTime == null) return 0;
+  const windowStart = tokensLimitResetTime - FIVE_HOUR_MS;
+  return fetchModelUsage(baseDomain, headers, windowStart, Date.now());
 }
