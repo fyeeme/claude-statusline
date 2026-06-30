@@ -10,7 +10,7 @@
 | 分叉点（merge-base） | `3d9f7b7` feat: add external usage snapshot fallback (#478) |
 | fork 独有提交数 | 50+（含 render 共享工具提取、颜色默认值改 none、expanded badge 右移、`terminalWidth`、缓存 0o600 加固） |
 | 功能偏离范围 | **全部集中在 `src/`**（含 4 个新 render 共享模块） |
-| 元数据偏离 | `package.json` version = **`1.0.0`**（上游 release-0.2.0 为 `0.2.0`；fork 独立版本号）；其余 `plugin.json`/`marketplace.json` 命名为 `claude-statusline`（上游 `claude-hud`） |
+| 元数据偏离 | `package.json` version = **`1.0.1`**（上游 release-0.2.0 为 `0.2.0`；fork 独立版本号）；其余 `plugin.json`/`marketplace.json` 命名为 `claude-statusline`（上游 `claude-hud`） |
 
 **核心改动一句话**：在上游的 statusline 基础上，新增 **GLM / DeepSeek 第三方 provider 的用量显示**（含余额、自然周 token、会话成本估算），并配套重写了 compact 布局、分隔符、颜色与缓存命中率口径；后续又统一了元素配色为裸文本（`none`）、expanded 布局下 badge 右移、引入 `terminalWidth` 权威宽度源，并加固缓存文件权限。
 

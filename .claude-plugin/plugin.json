@@ -1,7 +1,7 @@
 {
   "name": "claude-statusline",
   "description": "Real-time statusline for Claude Code - context health, GLM & DeepSeek usage, tool activity, agent tracking, and todo progress",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "fyeeme",
     "url": "https://github.com/fyeeme"

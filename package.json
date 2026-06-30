@@ -1,6 +1,6 @@
 {
   "name": "claude-statusline",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Real-time statusline for Claude Code with GLM & DeepSeek provider support",
   "type": "module",
   "main": "dist/index.js",
