@@ -265,8 +265,8 @@ function formatUsageWindowPart({
   // Build suffix for semantic (rolling/cycle) windows (GLM)
   let suffix = '';
   if (windowType === 'cycle' && tokenCount != null && tokenCount > 0) {
-    // 7d with tokens: "138M, 5d 3h" (token count + remaining time)
-    suffix = reset ? ` (${formatTokenCount(tokenCount)}, ${reset})` : ` (${formatTokenCount(tokenCount)})`;
+    // 7d with tokens: "138M,5d3h" (token count + remaining time)
+    suffix = reset ? ` (${formatTokenCount(tokenCount)},${reset})` : ` (${formatTokenCount(tokenCount)})`;
   } else if (windowType === 'cycle' && resetAt != null) {
     // 5h cycle: remaining time "3h 30m"
     suffix = reset ? ` (${reset})` : '';

@@ -43,7 +43,7 @@ test('relative: shows minutes when < 1 hour', () => {
 
 test('relative: shows hours + minutes when < 24 hours', () => {
   const result = formatResetTime(future(2 * HOUR + 30 * MINUTE));
-  assert.match(result, /^2h 30m$/);
+  assert.match(result, /^2h30m$/);
 });
 
 test('relative: shows hours only when minutes == 0', () => {
@@ -54,7 +54,7 @@ test('relative: shows hours only when minutes == 0', () => {
 
 test('relative: shows days + hours for durations >= 24 hours', () => {
   const result = formatResetTime(future(6 * DAY + 7 * HOUR));
-  assert.match(result, /^6d 7h$/);
+  assert.match(result, /^6d7h$/);
 });
 
 test('relative: shows days only when remaining hours == 0', () => {
@@ -67,8 +67,8 @@ test('relative: is the default when mode is omitted', () => {
   const withDefault = formatResetTime(future(90 * MINUTE));
   const withExplicit = formatResetTime(future(90 * MINUTE), 'relative');
   // Both should match the same pattern (values may differ by a few ms)
-  assert.match(withDefault, /^\d+h( \d+m)?$/);
-  assert.match(withExplicit, /^\d+h( \d+m)?$/);
+  assert.match(withDefault, /^\d+h(\d+m)?$/);
+  assert.match(withExplicit, /^\d+h(\d+m)?$/);
 });
 
 // ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ test('absolute: includes date component when reset is tomorrow or later', () => 
 
 test('both: contains the relative duration', () => {
   const result = formatResetTime(future(2 * HOUR + 30 * MINUTE), 'both');
-  assert.match(result, /2h 30m/);
+  assert.match(result, /2h30m/);
 });
 
 test('both: contains the absolute "at" part after a comma', () => {
@@ -119,7 +119,7 @@ test('both: contains the absolute "at" part after a comma', () => {
 test('both: format is "<relative>, <absolute>"', () => {
   const result = formatResetTime(future(2 * HOUR), 'both');
   // e.g. "2h, at 14:30" — comma avoids nested parens when caller wraps in (...)
-  assert.match(result, /^\d+h( \d+m)?, at .+$/);
+  assert.match(result, /^\d+h(\d+m)?, at .+$/);
 });
 
 // ---------------------------------------------------------------------------

@@ -6,9 +6,9 @@ import { t } from '../i18n/index.js';
  *
  * @param resetAt - The reset timestamp, or null if unknown.
  * @param mode    - How to express the time:
- *   - `'relative'` (default) — duration until reset, e.g. `2h 30m`
+ *   - `'relative'` (default) — duration until reset, e.g. `2h30m`
  *   - `'absolute'`           — wall-clock time,       e.g. `at 14:30` (locale-aware)
- *   - `'both'`               — both combined,          e.g. `2h 30m, at 14:30` (locale-aware)
+ *   - `'both'`               — both combined,          e.g. `2h30m, at 14:30` (locale-aware)
  * @returns A formatted string, or an empty string when the reset is in the past
  *          or the date is unknown.
  */
@@ -47,10 +47,10 @@ function formatRelative(diffMs: number): string {
   if (hours >= 24) {
     const days = Math.floor(hours / 24);
     const remHours = hours % 24;
-    return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+    return remHours > 0 ? `${days}d${remHours}h` : `${days}d`;
   }
 
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
 }
 
 function formatAbsolute(resetAt: Date, now: Date): string {
